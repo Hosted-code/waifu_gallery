@@ -22,7 +22,6 @@
 #include "service/database.h"
 #include <QObject>
 #include <QPixmap>
-#include <filesystem>
 
 class DatabaseWorker : public QObject { // database search worker in another thread
     Q_OBJECT
