@@ -77,12 +77,24 @@ Waifu Gallery 是基于 Qt6 开发的桌面应用程序，专门为管理二次�
 
 这个项目还在持续开发中，还没有发布正式版本。如果你想参与开发或自行构建项目，请按照以下步骤操作：
 
-### 环境要求
+### Windows 环境要求
 
 - MSVC 编译器
 - Qt6 框架
 - vcpkg 包管理器
 - CMake 构建工具
+
+### Linux 环境要求
+
+- GCC 11+ 或 Clang 14+
+- Qt6 框架（`qt6-base-dev`）
+- CMake 3.20+
+- 系统库：`libsqlite3-dev`、`libxxhash-dev`、`libwebp-dev`、`nlohmann-json3-dev`、`libstb-dev`
+
+Ubuntu/Debian 一键安装依赖：
+```bash
+sudo apt-get install -y cmake qt6-base-dev libgl1-mesa-dev nlohmann-json3-dev libsqlite3-dev libwebp-dev libxxhash-dev libstb-dev
+```
 
 ### 获取源码
 
@@ -91,7 +103,7 @@ git clone https://github.com/R4nd5tr/waifu_gallery.git
 cd waifu_gallery
 ```
 
-### 构建项目
+### Windows 构建项目
 
 修改 `CMakePresets.json.example` 文件中的路径为你的环境路径，并重命名为 `CMakePresets.json`。
 
@@ -108,6 +120,39 @@ cmake --build --preset=msvc-release-build
 ```bash
 windeployqt <path-to-executable>
 ```
+
+### Linux 构建项目
+
+方式一：使用 CMake Preset（需要 vcpkg）
+
+修改 `CMakePresets.json.example` 中的路径并重命名为 `CMakePresets.json`，然后：
+```bash
+cmake --preset=linux-release
+cmake --build --preset=linux-release-build
+```
+
+方式二：使用系统包（推荐，无需 vcpkg）
+
+```bash
+mkdir build/linux && cd build/linux
+cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="/usr/lib/x86_64-linux-gnu/cmake/Qt6"
+cmake --build . -j$(nproc)
+```
+
+编译结果在 `build/linux/waifu_gallery`。
+
+## Linux 移植说明
+
+本项目原始版本仅支持 Windows，以下改动用于支持 Linux：
+
+| 文件 | 改动 |
+|------|------|
+| `src/service/parser.cpp` | `windows.h` + `WIN32_FILE_ATTRIBUTE_DATA` → `std::filesystem::last_write_time` 获取文件时间戳。Linux 上无文件创建时间，回退使用最后修改时间 |
+| `src/utils/autotagger_loader.h` | `LoadLibraryW/GetProcAddress/FreeLibrary` → `dlopen/dlsym/dlclose` 动态加载 `.so`（替代 `.dll`） |
+| `src/gui/widgets/picture_frame.cpp` | `_wsystem("explorer ...")` → `xdg-open` 打开文件所在目录 |
+| `CMakeLists.txt` | `WIN32` flag 条件化；系统包 fallback（不依赖 vcpkg 也可编译）；GCC 11+ moc 兼容性修复 |
+| `CMakePresets.json.example` | 新增 `linux-release` preset |
+| `external/rapidcsv/rapidcsv.h` | 新增 rapidcsv 头文件（vcpkg 不可用时使用） |
 
 ## 开发计划
 - [x] 基于深度学习模型的自动标签标注
