@@ -19,15 +19,19 @@
 #pragma once
 #include "autotagger/autotagger.h"
 #include <string>
+#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 using CreateFunc = AutoTagger* (*)();
 using DestroyFunc = void (*)(AutoTagger*);
 
-class AutoTaggerLoader { // DLL 动态加载器，与 AutoTagger 实例使用共同的生命周期
+class AutoTaggerLoader {
 public:
     AutoTaggerLoader() = default;
     ~AutoTaggerLoader() { unload(); }
@@ -35,40 +39,50 @@ public:
         std::vector<std::filesystem::path> taggerPaths;
         std::filesystem::path searchPath = "./model/";
         for (const auto& entry : std::filesystem::directory_iterator(searchPath)) {
-            if (entry.is_regular_file() && entry.path().extension() == ".dll") {
-                taggerPaths.push_back(entry.path());
+            if (entry.is_regular_file()) {
+#ifdef _WIN32
+                if (entry.path().extension() == ".dll")
+#else
+                if (entry.path().extension() == ".so")
+#endif
+                    taggerPaths.push_back(entry.path());
             }
         }
         return taggerPaths;
     };
 
-    // 加载 DLL
     bool load(const std::filesystem::path& dllPath) {
+#ifdef _WIN32
         hDll_ = LoadLibraryW(dllPath.wstring().c_str());
         if (!hDll_) return false;
-
-        // 获取函数指针
-        createFunc_ = reinterpret_cast<CreateFunc>(GetProcAddress(hDll_, "createAutoTagger"));
-        destroyFunc_ = reinterpret_cast<DestroyFunc>(GetProcAddress(hDll_, "destroyAutoTagger"));
-
+        createFunc_ = reinterpret_cast<CreateFunc>(GetProcAddress(static_cast<HMODULE>(hDll_), "createAutoTagger"));
+        destroyFunc_ = reinterpret_cast<DestroyFunc>(GetProcAddress(static_cast<HMODULE>(hDll_), "destroyAutoTagger"));
+#else
+        hDll_ = dlopen(dllPath.string().c_str(), RTLD_LAZY);
+        if (!hDll_) return false;
+        createFunc_ = reinterpret_cast<CreateFunc>(dlsym(hDll_, "createAutoTagger"));
+        destroyFunc_ = reinterpret_cast<DestroyFunc>(dlsym(hDll_, "destroyAutoTagger"));
+#endif
         return createFunc_ && destroyFunc_;
     }
 
-    // 卸载 DLL
     void unload() {
         if (taggerInstance_) {
             destroyFunc_(taggerInstance_);
             taggerInstance_ = nullptr;
         }
         if (hDll_) {
-            FreeLibrary(hDll_);
+#ifdef _WIN32
+            FreeLibrary(static_cast<HMODULE>(hDll_));
+#else
+            dlclose(hDll_);
+#endif
             hDll_ = nullptr;
             createFunc_ = nullptr;
             destroyFunc_ = nullptr;
         }
     }
 
-    // 创建标签器实例
     AutoTagger* getTagger() {
         if (taggerInstance_ == nullptr) {
             taggerInstance_ = createFunc_ ? createFunc_() : nullptr;
@@ -80,7 +94,7 @@ public:
 
 private:
     AutoTagger* taggerInstance_ = nullptr;
-    HMODULE hDll_ = nullptr;
+    void* hDll_ = nullptr;
     CreateFunc createFunc_ = nullptr;
     DestroyFunc destroyFunc_ = nullptr;
 };

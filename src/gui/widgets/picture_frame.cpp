@@ -299,12 +299,17 @@ void PictureFrame::openFileLocation() const {
     if (released || !picItem) return;
     for (const auto& path : picItem->info.filePaths) {
         try {
+#ifdef _WIN32
             std::wstring command = L"explorer /select,\"";
             std::wstring winPath = path.wstring();
             std::replace(winPath.begin(), winPath.end(), L'/', L'\\');
             command += winPath;
             command += L"\"";
             int result = _wsystem(command.c_str());
+#else
+            std::string command = "xdg-open \"" + path.parent_path().string() + "\"";
+            int result = std::system(command.c_str());
+#endif
             if (result == -1) {
                 Info() << "Failed to open file location for path:" << path;
                 continue;

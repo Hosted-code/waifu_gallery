@@ -28,10 +28,6 @@
 #include <stb_image.h>
 #include <vector>
 #include <webp/decode.h>
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
 #include <xxhash.h>
 
 static const std::unordered_map<std::string, ImageFormat> fileTypeMap = {
@@ -556,36 +552,37 @@ std::tuple<int, int, ImageFormat> getImageResolutionOptimized(const std::vector<
     Warn() << "Failed to parse image header, falling back to full decoding.";
     return getImageResolution(buffer, fileType);
 }
-// get {file creation time, last modified time} in ISO 8601 format from Windows API
+// get {file creation time, last modified time} in ISO 8601 format (cross-platform)
 std::pair<std::string, std::string> getFileTimestamps(const std::filesystem::path& filePath) {
-    WIN32_FILE_ATTRIBUTE_DATA fileInfo;
-    if (!GetFileAttributesExW(filePath.wstring().c_str(), GetFileExInfoStandard, &fileInfo)) {
-        return {"", ""};
+    std::string creationTime, lastModifiedTime;
+    auto formatTime = [](const std::filesystem::file_time_type& ftime) -> std::string {
+        try {
+            auto sctp = std::chrono::time_point_cast<std::chrono::seconds>(
+                ftime - std::filesystem::file_time_type::clock::now()
+                + std::chrono::system_clock::now());
+            auto time_t_val = std::chrono::system_clock::to_time_t(sctp);
+            std::tm tm_val{};
+#ifdef _WIN32
+            gmtime_s(&tm_val, &time_t_val);
+#else
+            gmtime_r(&time_t_val, &tm_val);
+#endif
+            char buf[21];
+            std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+                          tm_val.tm_year + 1900, tm_val.tm_mon + 1, tm_val.tm_mday,
+                          tm_val.tm_hour, tm_val.tm_min, tm_val.tm_sec);
+            return std::string(buf);
+        } catch (...) {
+            return "";
+        }
+    };
+    try {
+        lastModifiedTime = formatTime(std::filesystem::last_write_time(filePath));
+    } catch (...) {
+        lastModifiedTime = "";
     }
-    FILETIME ftCreate = fileInfo.ftCreationTime;
-    FILETIME ftWrite = fileInfo.ftLastWriteTime;
-    SYSTEMTIME stUTC;
-    FileTimeToSystemTime(&ftCreate, &stUTC);
-    char createTimeStr[21];
-    snprintf(createTimeStr,
-             sizeof(createTimeStr),
-             "%04d-%02d-%02dT%02d:%02d:%02dZ",
-             stUTC.wYear,
-             stUTC.wMonth,
-             stUTC.wDay,
-             stUTC.wHour,
-             stUTC.wMinute,
-             stUTC.wSecond);
-    FileTimeToSystemTime(&ftWrite, &stUTC);
-    char writeTimeStr[21];
-    snprintf(writeTimeStr,
-             sizeof(writeTimeStr),
-             "%04d-%02d-%02dT%02d:%02d:%02dZ",
-             stUTC.wYear,
-             stUTC.wMonth,
-             stUTC.wDay,
-             stUTC.wHour,
-             stUTC.wMinute,
-             stUTC.wSecond);
-    return {std::string(createTimeStr), std::string(writeTimeStr)};
+    // Note: std::filesystem does not provide creation time portably.
+    // On Linux, fall back to last modified time as creation time.
+    creationTime = lastModifiedTime;
+    return {creationTime, lastModifiedTime};
 }
