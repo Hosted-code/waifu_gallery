@@ -38,6 +38,12 @@ public:
     std::vector<std::filesystem::path> discoverAutoTaggers() {
         std::vector<std::filesystem::path> taggerPaths;
         std::filesystem::path searchPath = "./model/";
+        
+        // 检查目录是否存在，避免遍历不存在的目录时抛出异常
+        if (!std::filesystem::exists(searchPath)) {
+            return taggerPaths;
+        }
+        
         for (const auto& entry : std::filesystem::directory_iterator(searchPath)) {
             if (entry.is_regular_file()) {
 #ifdef _WIN32
