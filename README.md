@@ -141,6 +141,10 @@ cmake --build . -j$(nproc)
 
 编译结果在 `build/linux/waifu_gallery`。
 
+### Linux 运行效果
+
+![Linux 版初始界面](./img/linux_screenshot.png)
+
 ## Linux 移植说明
 
 本项目原始版本仅支持 Windows，以下改动用于支持 Linux：
