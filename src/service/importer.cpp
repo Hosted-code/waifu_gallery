@@ -256,3 +256,9 @@ void Importer::insertThreadFunc() {
     // progress equals to total is the signal of completion
     if (progressCallback) progressCallback(importedCount, supportedFileCount.load());
 }
+
+FetchRecordImportResult Importer::importTagsFromFetchRecord(const std::filesystem::path& directory, const std::filesystem::path& fetchRecordPath) {
+    FetchRecordImportResult result = generateMetaJsonFromFetchRecord(directory, fetchRecordPath);
+    Info() << "Generated meta.json from fetch record. Matched: " << result.matched << " Unmatched: " << result.unmatched;
+    return result;
+}

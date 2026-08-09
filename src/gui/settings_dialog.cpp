@@ -18,6 +18,7 @@
 
 #include "settings_dialog.h"
 #include "controllers/utils.h"
+#include "service/parser.h"
 #include "ui_settings_dialog.h"
 #include <QComboBox>
 #include <QMessageBox>
@@ -51,7 +52,8 @@ SettingsDialog::~SettingsDialog() {
 void SettingsDialog::setupTableWidget() const {
     QStringList headers;
     headers << "图片目录"
-            << "解析器类型";
+            << "解析器类型"
+            << "导入标签";
     ui->picDirsTable->setColumnCount(headers.size());
     ui->picDirsTable->setHorizontalHeaderLabels(headers);
     ui->picDirsTable->verticalHeader()->hide();
@@ -79,6 +81,13 @@ void SettingsDialog::loadSettings() {
     for (int i = 0; i < picDirectories.size(); i++) {
         ui->picDirsTable->setItem(i, 0, createDirItem(QString::fromStdString(picDirectories[i].first.string())));
         ui->picDirsTable->setCellWidget(i, 1, createParserComboBox(picDirectories[i].second));
+        auto* importTagsBtn = new QPushButton(tr("导入标签"));
+        importTagsBtn->setProperty("row", i);
+        connect(importTagsBtn, &QPushButton::clicked, this, &SettingsDialog::importTagsForDirectory);
+        bool hasMeta = std::filesystem::exists(picDirectories[i].first) && directoryHasMetadata(picDirectories[i].first);
+        importTagsBtn->setEnabled(!hasMeta);
+        if (hasMeta) importTagsBtn->setToolTip(tr("该目录已有元数据"));
+        ui->picDirsTable->setCellWidget(i, 2, importTagsBtn);
     }
 }
 void SettingsDialog::saveSettings() {
@@ -111,6 +120,14 @@ void SettingsDialog::addPicDirectory() {
     ui->picDirsTable->setRowCount(newRow + 1);
     ui->picDirsTable->setItem(newRow, 0, createDirItem(dir));
     ui->picDirsTable->setCellWidget(newRow, 1, createParserComboBox(ParserType::None));
+    auto* importTagsBtn = new QPushButton(tr("导入标签"));
+    importTagsBtn->setProperty("row", newRow);
+    connect(importTagsBtn, &QPushButton::clicked, this, &SettingsDialog::importTagsForDirectory);
+    std::filesystem::path dirPath(dir.toStdString());
+    bool hasMeta = std::filesystem::exists(dirPath) && directoryHasMetadata(dirPath);
+    importTagsBtn->setEnabled(!hasMeta);
+    if (hasMeta) importTagsBtn->setToolTip(tr("该目录已有元数据"));
+    ui->picDirsTable->setCellWidget(newRow, 2, importTagsBtn);
 }
 void SettingsDialog::deletePicDirectory() {
     int currentRow = ui->picDirsTable->currentRow();
@@ -122,4 +139,21 @@ void SettingsDialog::deletePicDirectory() {
 
     picDirectories.erase(picDirectories.begin() + currentRow);
     ui->picDirsTable->removeRow(currentRow);
+}
+
+void SettingsDialog::importTagsForDirectory() {
+    auto* btn = qobject_cast<QPushButton*>(sender());
+    if (!btn) return;
+
+    int row = btn->property("row").toInt();
+    if (row < 0 || row >= ui->picDirsTable->rowCount()) return;
+
+    QString dirStr = ui->picDirsTable->item(row, 0)->text();
+    std::filesystem::path dirPath(dirStr.toStdString());
+
+    QString fetchRecord = QFileDialog::getOpenFileName(
+        this, tr("选择抓取记录文件"), QString(), tr("JSON 文件 (*.json)"));
+    if (fetchRecord.isEmpty()) return;
+
+    emit importTagsRequested(dirPath, std::filesystem::path(fetchRecord.toStdString()));
 }

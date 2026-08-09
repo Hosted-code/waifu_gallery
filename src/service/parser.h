@@ -76,3 +76,14 @@ ParsedPicture parsePicture(const std::filesystem::path& pictureFilePath, ParserT
 std::vector<ParsedMetadata> powerfulPixivDownloaderMetadataParser(const std::filesystem::path& metadataFilePath);
 
 ParsedMetadata gallerydlTwitterMetadataParser(const std::filesystem::path& metadataFilePath);
+
+struct FetchRecordImportResult {
+    int matched = 0;
+    int unmatched = 0;
+    std::vector<std::string> errors;
+};
+
+bool directoryHasMetadata(const std::filesystem::path& directory);
+FetchRecordImportResult generateMetaJsonFromFetchRecord(const std::filesystem::path& directory, const std::filesystem::path& fetchRecordPath);
+
+FetchRecordImportResult generateMetaJsonFromFetchRecord(const std::filesystem::path& directory, const std::filesystem::path& fetchRecordPath);

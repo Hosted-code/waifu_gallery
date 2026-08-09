@@ -37,6 +37,10 @@ public:
 
     void addPicDirectory();
     void deletePicDirectory();
+    void importTagsForDirectory();
+
+signals:
+    void importTagsRequested(const std::filesystem::path& directory, const std::filesystem::path& fetchRecordPath);
 
 private:
     Ui::SettingsDialog* ui;

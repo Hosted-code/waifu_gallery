@@ -28,7 +28,7 @@
 class Importer {
 public:
     Importer(ProgressCallback progressCallback = nullptr,
-             const std::string& dbFile = DEFAULT_DATABASE_FILE,
+             const std::string& dbFile = "",
              const size_t threadCount = std::thread::hardware_concurrency())
         : progressCallback(progressCallback), dbFile(dbFile), threadCount(threadCount) {};
     ~Importer() {
@@ -40,6 +40,8 @@ public:
     bool finish(); // return true means ready to start a new import task
     void forceStop();
     std::pair<std::filesystem::path, ParserType> getImportingDir() const { return {importDirectory, parserType}; }
+
+    FetchRecordImportResult importTagsFromFetchRecord(const std::filesystem::path& directory, const std::filesystem::path& fetchRecordPath);
 
 private:
     bool finished = true;

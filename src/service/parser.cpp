@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <nlohmann/json.hpp>
 #include <rapidcsv.h>
 #include <regex>
 #define STB_IMAGE_IMPLEMENTATION
@@ -219,11 +220,22 @@ std::vector<ParsedMetadata> parsePixivJson(const std::filesystem::path& pixivJso
     std::vector<ParsedMetadata> result;
     std::vector<uint8_t> data = readFileToBuffer(pixivJsonFilePath);
     auto json = nlohmann::json::parse(data, nullptr, false);
-    if (json.is_discarded() || !json.is_array()) {
-        Error() << "Failed to parse JSON or JSON is not an array.";
+    if (json.is_discarded()) {
+        Error() << "Failed to parse JSON.";
         return result;
     }
-    for (const auto& obj : json) {
+    
+    nlohmann::json items;
+    if (json.is_array()) {
+        items = json;
+    } else if (json.is_object()) {
+        items = nlohmann::json::array({json});
+    } else {
+        Error() << "JSON is neither array nor object.";
+        return result;
+    }
+    
+    for (const auto& obj : items) {
         ParsedMetadata info;
         info.platformType = PlatformType::Pixiv;
         info.updateIfExists = true;
@@ -239,15 +251,13 @@ std::vector<ParsedMetadata> parsePixivJson(const std::filesystem::path& pixivJso
         info.date = replacePlusZeroWithZ(obj.value("date", ""));
 
         // tags
-        if (obj.contains("tags") && obj["tags"].is_array()) {
-            for (const auto& tag : obj["tags"]) {
+        if (obj.contains("tagsTranslOnly") && obj["tagsTranslOnly"].is_array()) {
+            for (const auto& tag : obj["tagsTranslOnly"]) {
                 info.tags.push_back(tag.get<std::string>());
             }
-        }
-        // tagsWithTransl
-        if (obj.contains("tagsWithTransl") && obj["tagsWithTransl"].is_array()) {
-            for (const auto& tag : obj["tagsWithTransl"]) {
-                info.tagsTransl.push_back(tag.get<std::string>());
+        } else if (obj.contains("tags") && obj["tags"].is_array()) {
+            for (const auto& tag : obj["tags"]) {
+                info.tags.push_back(tag.get<std::string>());
             }
         }
         result.push_back(info);
@@ -264,8 +274,6 @@ std::vector<ParsedMetadata> powerfulPixivDownloaderMetadataParser(const std::fil
         return parsePixivJson(metadataFilePath);
     } else if (metadataFilePath.extension() == ".csv") {
         return parsePixivCsv(metadataFilePath);
-    } else if (metadataFilePath.extension() == ".txt") {
-        return {parsePixivMetadata(metadataFilePath)};
     }
     return result;
 }
@@ -585,4 +593,104 @@ std::pair<std::string, std::string> getFileTimestamps(const std::filesystem::pat
     // On Linux, fall back to last modified time as creation time.
     creationTime = lastModifiedTime;
     return {creationTime, lastModifiedTime};
+}
+
+bool directoryHasMetadata(const std::filesystem::path& directory) {
+    if (!std::filesystem::exists(directory)) return false;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(directory)) {
+        if (!entry.is_regular_file()) continue;
+        if (entry.path().extension() == ".json") {
+            std::string filename = entry.path().filename().string();
+            if (filename.find("-meta.json") != std::string::npos) return true;
+        }
+    }
+    return false;
+}
+
+FetchRecordImportResult generateMetaJsonFromFetchRecord(const std::filesystem::path& directory, const std::filesystem::path& fetchRecordPath) {
+    FetchRecordImportResult result;
+
+    if (!std::filesystem::exists(fetchRecordPath)) {
+        result.errors.push_back("抓取记录文件不存在: " + fetchRecordPath.string());
+        return result;
+    }
+
+    std::ifstream file(fetchRecordPath);
+    if (!file.is_open()) {
+        result.errors.push_back("无法打开抓取记录文件: " + fetchRecordPath.string());
+        return result;
+    }
+
+    nlohmann::json fetchRecords;
+    try {
+        fetchRecords = nlohmann::json::parse(file);
+    } catch (const std::exception& e) {
+        result.errors.push_back("抓取记录文件格式无效: " + std::string(e.what()));
+        return result;
+    }
+
+    if (!fetchRecords.is_array()) {
+        result.errors.push_back("抓取记录文件不是有效的 JSON 数组");
+        return result;
+    }
+
+    std::unordered_map<int64_t, nlohmann::json> recordById;
+    for (const auto& record : fetchRecords) {
+        if (record.contains("idNum") && record["idNum"].is_number()) {
+            recordById[record["idNum"].get<int64_t>()] = record;
+        }
+    }
+
+    if (recordById.empty()) {
+        result.errors.push_back("抓取记录中没有有效的作品条目");
+        return result;
+    }
+
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(directory)) {
+        if (!entry.is_regular_file()) continue;
+
+        std::string ext = entry.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext != ".jpg" && ext != ".png" && ext != ".jpeg" && ext != ".gif" && ext != ".webp") continue;
+
+        std::string filename = entry.path().stem().string();
+        size_t underscorePos = filename.find("_p");
+        if (underscorePos == std::string::npos) {
+            result.unmatched++;
+            continue;
+        }
+
+        std::string idStr = filename.substr(0, underscorePos);
+        int64_t pixivId = 0;
+        try {
+            pixivId = std::stoll(idStr);
+        } catch (...) {
+            result.unmatched++;
+            continue;
+        }
+
+        auto it = recordById.find(pixivId);
+        if (it == recordById.end()) {
+            result.unmatched++;
+            continue;
+        }
+
+        std::filesystem::path metaPath = entry.path().parent_path() / (idStr + "-meta.json");
+        if (std::filesystem::exists(metaPath)) {
+            result.matched++;
+            continue;
+        }
+
+        std::ofstream metaFile(metaPath);
+        if (!metaFile.is_open()) {
+            result.errors.push_back("无法写入元数据文件: " + metaPath.string());
+            continue;
+        }
+
+        metaFile << it->second.dump(2);
+        metaFile.close();
+        result.matched++;
+    }
+
+    return result;
 }
