@@ -22,11 +22,9 @@
 #include <string>
 #include <vector>
 
-const std::string DEFALT_SETTINGS_FILE_PATH = "settings.json";
-
 class Settings {
 public:
-    static void loadSettings(const std::filesystem::path& path = DEFALT_SETTINGS_FILE_PATH);
+    static void loadSettings(const std::filesystem::path& path = std::filesystem::path{});
     static void saveSettings();
 
     static void setWidthHeight(uint32_t width, uint32_t height) {

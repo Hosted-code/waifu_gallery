@@ -18,6 +18,7 @@
 
 #include "gui/main_window.h"
 #include "utils/logger.h"
+#include "utils/paths.h"
 #include <QApplication>
 #include <QDateTime>
 #include <QFile>
@@ -30,19 +31,20 @@ const int MAX_LOG_FILES = 5;
 QString logFileName = "";
 
 void setLogFile() {
-    logFileName = "waifu_gallery.log";
+    Paths::ensureDirectoryExists(Paths::getDataDirectory());
+    logFileName = QString::fromStdString(Paths::getLogPath().u8string());
 
     QFile logFile(logFileName);
     if (logFile.exists() && logFile.size() >= MAX_LOG_FILE_SIZE) {
         logFile.close();
         for (int i = MAX_LOG_FILES - 1; i >= 1; --i) {
-            QString oldFileName = QString("waifu_gallery.log.%1").arg(i);
-            QString newFileName = QString("waifu_gallery.log.%1").arg(i + 1);
+            QString oldFileName = QString::fromStdString((Paths::getDataDirectory() / QString("waifu_gallery.log.%1").arg(i).toStdString()).u8string());
+            QString newFileName = QString::fromStdString((Paths::getDataDirectory() / QString("waifu_gallery.log.%1").arg(i + 1).toStdString()).u8string());
             if (QFile::exists(oldFileName)) {
                 QFile::rename(oldFileName, newFileName);
             }
         }
-        QFile::rename(logFileName, "waifu_gallery.log.1");
+        QFile::rename(logFileName, QString::fromStdString((Paths::getDataDirectory() / "waifu_gallery.log.1").u8string()));
     }
 }
 

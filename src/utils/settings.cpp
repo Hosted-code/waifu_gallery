@@ -18,6 +18,7 @@
 
 #include "settings.h"
 #include "utils/logger.h"
+#include "utils/paths.h"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -30,16 +31,24 @@ std::vector<std::pair<std::filesystem::path, ParserType>> Settings::picDirectori
 bool Settings::autoImportOnStartup = false;
 bool Settings::autoTagAfterImport = false;
 std::filesystem::path Settings::autoTaggerDLLPath = "";
-std::filesystem::path Settings::settingsFilePath = DEFALT_SETTINGS_FILE_PATH;
+std::filesystem::path Settings::settingsFilePath = "";
 
 void Settings::loadSettings(const std::filesystem::path& path) {
     if (settingsLoaded) {
         Info() << "Settings already loaded.";
         return;
     }
+    
+    Paths::ensureDirectoryExists(Paths::getConfigDirectory());
+    
+    std::filesystem::path settingsPath = path;
+    if (settingsPath.empty()) {
+        settingsPath = Paths::getSettingsPath();
+    }
+    
     try {
-        if (std::filesystem::exists(path)) {
-            settingsFilePath = path;
+        if (std::filesystem::exists(settingsPath)) {
+            settingsFilePath = settingsPath;
             std::ifstream inFile(settingsFilePath);
             json j;
             inFile >> j;
@@ -73,6 +82,13 @@ void Settings::saveSettings() {
         Info() << "Settings not loaded. Skipping save.";
         return;
     }
+    
+    Paths::ensureDirectoryExists(Paths::getConfigDirectory());
+    
+    if (settingsFilePath.empty()) {
+        settingsFilePath = Paths::getSettingsPath();
+    }
+    
     try {
         json j;
         j["windowWidth"] = windowWidth;
