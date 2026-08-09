@@ -49,7 +49,14 @@ std::vector<std::filesystem::path> collectFiles(const std::filesystem::path& dir
 // PicDatabase class implementation
 
 PicDatabase::PicDatabase(const std::string& databaseFile, DbMode mode) {
-    initDatabase(databaseFile);
+    std::string dbFile = databaseFile;
+    
+    if (dbFile.empty() || dbFile == "database.db") {
+        Paths::ensureDirectoryExists(Paths::getDataDirectory());
+        dbFile = Paths::getDatabasePathString();
+    }
+    
+    initDatabase(dbFile);
     setMode(mode);
     initTagMapping();
     if (mode == DbMode::Import) initImportedFiles(); // only needed in import mode, to avoid parsing duplicate files
@@ -182,6 +189,17 @@ bool PicDatabase::createTables() const {
             UNIQUE (platform, tag)
         )
     )";
+    const std::string platformTagClassificationTable = R"(
+        CREATE TABLE IF NOT EXISTS platform_tag_classification (
+            platform INTEGER NOT NULL,
+            tag TEXT NOT NULL,
+            is_character BOOLEAN NOT NULL,
+
+            PRIMARY KEY (platform, tag),
+
+            FOREIGN KEY (platform, tag) REFERENCES platform_tags(platform, tag) ON DELETE CASCADE
+        )
+    )";
     const std::string picMetadataTagsTable = R"(
         CREATE TABLE IF NOT EXISTS picture_metadata_tags (
             platform INTEGER NOT NULL,
@@ -222,6 +240,7 @@ bool PicDatabase::createTables() const {
                                              // picture metadata
                                              picMetadataTable,
                                              platformTagsTable,
+                                             platformTagClassificationTable,
                                              picMetadataTagsTable,
                                              // imported files tracking
                                              importedDirectoriesTable,
@@ -265,6 +284,11 @@ bool PicDatabase::createTables() const {
     commitTransaction();
     return true;
 }
+void PicDatabase::refreshTagMapping() const {
+    cache.clearTagMapping();
+    initTagMapping();
+}
+
 void PicDatabase::initTagMapping() const {
     if (cache.tagMappingLoaded()) return;
 
@@ -273,34 +297,39 @@ void PicDatabase::initTagMapping() const {
     std::vector<PlatformTagStr> platformTags;
     std::unordered_map<std::string, uint32_t> tagToId;
     std::unordered_map<PlatformTagStr, uint32_t> platformTagToId;
+    std::unordered_map<uint32_t, TagStr> tagById;
+    std::unordered_map<uint32_t, PlatformTagStr> platformTagById;
 
-    stmt = prepare("SELECT tag, is_character FROM tags ORDER BY tag_id ASC");
+    stmt = prepare("SELECT tag_id, tag, is_character FROM tags ORDER BY tag_id ASC");
     if (!stmt.get()) {
         Error() << "Failed to prepare statement for fetching tags.";
         return;
     }
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-        const char* tag = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0));
-        bool isCharacterTag = sqlite3_column_int(stmt.get(), 1) != 0;
+        uint32_t id = sqlite3_column_int(stmt.get(), 0);
+        const char* tag = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1));
+        bool isCharacterTag = sqlite3_column_int(stmt.get(), 2) != 0;
         tags.emplace_back(TagStr{tag, isCharacterTag});
-        // only need tagToId mapping in import mode, for inserting new tags
+        tagById[id] = TagStr{tag, isCharacterTag};
         if (currentMode == DbMode::Import) tagToId[tag] = static_cast<uint32_t>(tags.size() - 1);
     }
 
-    stmt = prepare("SELECT tag, platform FROM platform_tags ORDER BY tag_id ASC");
+    stmt = prepare("SELECT tag_id, tag, platform FROM platform_tags ORDER BY tag_id ASC");
     if (!stmt.get()) {
         Error() << "Failed to prepare statement for fetching twitter hashtags.";
         return;
     }
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-        const char* tag = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0));
-        auto platform = static_cast<PlatformType>(sqlite3_column_int(stmt.get(), 1));
+        uint32_t id = sqlite3_column_int(stmt.get(), 0);
+        const char* tag = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1));
+        auto platform = static_cast<PlatformType>(sqlite3_column_int(stmt.get(), 2));
         platformTags.emplace_back(PlatformTagStr{platform, tag});
+        platformTagById[id] = PlatformTagStr{platform, tag};
         if (currentMode == DbMode::Import)
-            platformTagToId[PlatformTagStr{platform, tag}] = static_cast<uint32_t>(platformTags.size() - 1); // same as above
+            platformTagToId[PlatformTagStr{platform, tag}] = id;
     }
 
-    cache.loadTagMapping(std::move(tagToId), std::move(platformTagToId), std::move(tags), std::move(platformTags));
+    cache.loadTagMapping(std::move(tagToId), std::move(platformTagToId), std::move(tags), std::move(platformTags), std::move(tagById), std::move(platformTagById));
 
     Info() << "Tag mappings loaded. Tags:" << tags.size() << "Platform Tags:" << platformTags.size();
 }
@@ -426,19 +455,64 @@ bool PicDatabase::insertMetadata(const ParsedMetadata& metadataInfo) {
     for (const auto& tag : metadataInfo.tags) {
         PlatformTagStr stringTag{metadataInfo.platformType, tag};
         if (!cache.platformTagExists(stringTag)) {
-            // insert new platform tag
-            uint32_t newId = cache.addPlatformTag(stringTag);
+            // Try to insert new tag, database will assign tag_id
             stmt = prepare(R"(
-                INSERT OR IGNORE INTO platform_tags(tag_id, platform, tag) VALUES (?, ?, ?)
+                INSERT INTO platform_tags(tag_id, platform, tag) VALUES (NULL, ?, ?)
             )");
-            sqlite3_bind_int(stmt.get(), 1, newId);
-            sqlite3_bind_int(stmt.get(), 2, static_cast<int>(metadataInfo.platformType));
-            sqlite3_bind_text(stmt.get(), 3, tag.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt.get(), 1, static_cast<int>(metadataInfo.platformType));
+            sqlite3_bind_text(stmt.get(), 2, tag.c_str(), -1, SQLITE_TRANSIENT);
+            int result = sqlite3_step(stmt.get());
+            
+            uint32_t newId;
+            if (result == SQLITE_DONE) {
+                // Successfully inserted, get the assigned tag_id
+                newId = static_cast<uint32_t>(sqlite3_last_insert_rowid(db));
+            } else {
+                // Tag already exists (UNIQUE constraint), query existing tag_id
+                stmt = prepare(R"(
+                    SELECT tag_id FROM platform_tags WHERE platform = ? AND tag = ?
+                )");
+                sqlite3_bind_int(stmt.get(), 1, static_cast<int>(metadataInfo.platformType));
+                sqlite3_bind_text(stmt.get(), 2, tag.c_str(), -1, SQLITE_TRANSIENT);
+                if (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+                    newId = static_cast<uint32_t>(sqlite3_column_int(stmt.get(), 0));
+                } else {
+                    Error() << "Failed to get existing platform_tag: " << tag;
+                    continue;
+                }
+            }
+            cache.addPlatformTagWithId(stringTag, newId);
+        }
+        
+        auto classification = getPlatformTagClassification(metadataInfo.platformType, tag);
+        if (classification.has_value()) {
+            uint32_t tagId = cache.getPlatformTagId(stringTag);
+            stmt = prepare(R"(
+                INSERT OR IGNORE INTO tags(tag, is_character) VALUES (?, ?)
+            )");
+            sqlite3_bind_text(stmt.get(), 1, tag.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt.get(), 2, classification.value() ? 1 : 0);
             if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
-                Error() << "Failed to insert new platform_tag: " << sqlite3_errmsg(db);
-                return false;
+                Error() << "Failed to insert classified tag: " << sqlite3_errmsg(db);
+            }
+            
+            stmt = prepare(R"(
+                SELECT tag_id FROM tags WHERE tag = ?
+            )");
+            sqlite3_bind_text(stmt.get(), 1, tag.c_str(), -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+                uint32_t aiTagId = static_cast<uint32_t>(sqlite3_column_int(stmt.get(), 0));
+                stmt = prepare(R"(
+                    INSERT OR IGNORE INTO picture_tags(id, tag_id, probability) VALUES (?, ?, 1.0)
+                )");
+                sqlite3_bind_int64(stmt.get(), 1, metadataInfo.id);
+                sqlite3_bind_int(stmt.get(), 2, aiTagId);
+                if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+                    Error() << "Failed to insert picture_tag: " << sqlite3_errmsg(db);
+                }
             }
         }
+        
         stmt = prepare(R"(
             INSERT OR IGNORE INTO picture_metadata_tags(
                 platform, platform_id, tag_id
@@ -450,20 +524,6 @@ bool PicDatabase::insertMetadata(const ParsedMetadata& metadataInfo) {
         if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
             Error() << "Failed to insert picture_metadata_tag: " << sqlite3_errmsg(db);
             return false;
-        }
-    }
-    if (metadataInfo.tags.size() == metadataInfo.tagsTransl.size()) {
-        for (size_t i = 0; i < metadataInfo.tags.size(); ++i) {
-            PlatformTagStr stringTag{metadataInfo.platformType, metadataInfo.tags[i]};
-            stmt = prepare(R"(
-                UPDATE platform_tags SET translated_tag = ? WHERE tag_id = ?
-            )");
-            sqlite3_bind_text(stmt.get(), 1, metadataInfo.tagsTransl[i].c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_int(stmt.get(), 2, cache.getPlatformTagId(stringTag));
-            if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
-                Error() << "Failed to update platform_tag translated_tag: " << sqlite3_errmsg(db);
-                return false;
-            }
         }
     }
     newMetadataIds.insert(PlatformID{metadataInfo.platformType, metadataInfo.id});
@@ -533,18 +593,32 @@ bool PicDatabase::updateMetadata(const ParsedMetadata& metadataInfo) const {
     for (const auto& tag : metadataInfo.tags) {
         PlatformTagStr stringTag{metadataInfo.platformType, tag};
         if (!cache.platformTagExists(stringTag)) {
-            // insert new platform tag
-            uint32_t newId = cache.addPlatformTag(stringTag);
+            // Try to insert new tag, database will assign tag_id
             stmt = prepare(R"(
-                INSERT OR IGNORE INTO platform_tags(tag_id, platform, tag) VALUES (?, ?, ?)
+                INSERT INTO platform_tags(tag_id, platform, tag) VALUES (NULL, ?, ?)
             )");
-            sqlite3_bind_int(stmt.get(), 1, newId);
-            sqlite3_bind_int(stmt.get(), 2, static_cast<int>(metadataInfo.platformType));
-            sqlite3_bind_text(stmt.get(), 3, tag.c_str(), -1, SQLITE_TRANSIENT);
-            if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
-                Error() << "Failed to insert new platform_tag: " << sqlite3_errmsg(db);
-                return false;
+            sqlite3_bind_int(stmt.get(), 1, static_cast<int>(metadataInfo.platformType));
+            sqlite3_bind_text(stmt.get(), 2, tag.c_str(), -1, SQLITE_TRANSIENT);
+            int result = sqlite3_step(stmt.get());
+            
+            uint32_t newId;
+            if (result == SQLITE_DONE) {
+                newId = static_cast<uint32_t>(sqlite3_last_insert_rowid(db));
+            } else {
+                // Tag already exists (UNIQUE constraint), query existing tag_id
+                stmt = prepare(R"(
+                    SELECT tag_id FROM platform_tags WHERE platform = ? AND tag = ?
+                )");
+                sqlite3_bind_int(stmt.get(), 1, static_cast<int>(metadataInfo.platformType));
+                sqlite3_bind_text(stmt.get(), 2, tag.c_str(), -1, SQLITE_TRANSIENT);
+                if (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+                    newId = static_cast<uint32_t>(sqlite3_column_int(stmt.get(), 0));
+                } else {
+                    Error() << "Failed to get existing platform_tag: " << tag;
+                    continue;
+                }
             }
+            cache.addPlatformTagWithId(stringTag, newId);
         }
         stmt = prepare(R"(
             INSERT OR IGNORE INTO picture_metadata_tags(
@@ -910,6 +984,19 @@ void PicDatabase::updateTagCounts() const {
 std::unordered_set<uint64_t> PicDatabase::tagSearch(const std::unordered_set<uint32_t>& includedTagIds,
                                                     const std::unordered_set<uint32_t>& excludedTagIds) const {
     std::unordered_set<uint64_t> results;
+    
+    if (includedTagIds.empty() && excludedTagIds.empty()) {
+        SQLiteStatement stmt = prepare("SELECT id FROM pictures");
+        if (!stmt.get()) {
+            Error() << "Failed to prepare get all pictures statement:" << sqlite3_errmsg(db);
+            return results;
+        }
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            results.insert(int64_to_uint64(sqlite3_column_int64(stmt.get(), 0)));
+        }
+        return results;
+    }
+    
     if (includedTagIds.empty()) return results;
 
     std::string includedTagIdStr;
@@ -929,8 +1016,11 @@ std::unordered_set<uint64_t> PicDatabase::tagSearch(const std::unordered_set<uin
         }
     }
     std::string sql = "SELECT id FROM picture_tags WHERE 1=1 AND tag_id IN (" + includedTagIdStr +
-                      ") AND id NOT IN (SELECT id FROM picture_tags WHERE tag_id IN (" + excludedTagIdStr +
-                      ")) GROUP BY id HAVING COUNT(DISTINCT tag_id) = " + std::to_string(includedTagIds.size());
+                      ")";
+    if (!excludedTagIds.empty()) {
+        sql += " AND id NOT IN (SELECT id FROM picture_tags WHERE tag_id IN (" + excludedTagIdStr + "))";
+    }
+    sql += " GROUP BY id HAVING COUNT(DISTINCT tag_id) = " + std::to_string(includedTagIds.size());
 
     SQLiteStatement stmt;
     stmt = prepare(sql);
@@ -965,14 +1055,16 @@ std::unordered_set<PlatformID> PicDatabase::platformTagSearch(const std::unorder
         }
     }
     std::string sql = "SELECT platform, platform_id FROM picture_metadata_tags WHERE tag_id IN (" + includedTagIdStr +
-                      ")"
-                      " AND NOT EXISTS ( SELECT 1 FROM picture_metadata_tags AS excluded WHERE excluded.tag_id IN (" +
-                      excludedTagIdStr +
-                      ")"
-                      " AND excluded.platform = picture_metadata_tags.platform"
-                      " AND excluded.platform_id = picture_metadata_tags.platform_id)"
-                      " GROUP BY platform, platform_id HAVING COUNT(DISTINCT tag_id) = " +
-                      std::to_string(includedTagIds.size());
+                      ")";
+    if (!excludedTagIds.empty()) {
+        sql += " AND NOT EXISTS ( SELECT 1 FROM picture_metadata_tags AS excluded WHERE excluded.tag_id IN (" +
+               excludedTagIdStr +
+               ")"
+               " AND excluded.platform = picture_metadata_tags.platform"
+               " AND excluded.platform_id = picture_metadata_tags.platform_id)";
+    }
+    sql += " GROUP BY platform, platform_id HAVING COUNT(DISTINCT tag_id) = " +
+           std::to_string(includedTagIds.size());
 
     SQLiteStatement stmt = prepare(sql);
     if (!stmt.get()) {
@@ -1067,7 +1159,15 @@ std::vector<TagCount> PicDatabase::getTagCounts() const {
         std::string tag = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1));
         uint32_t count = sqlite3_column_int(stmt.get(), 2);
         bool isCharacter = sqlite3_column_int(stmt.get(), 3) != 0;
-        tagCounts.emplace_back(TagCount{TagStr{tag, isCharacter}, tagId, count});
+        
+        SQLiteStatement fileStmt = prepare("SELECT COUNT(*) FROM picture_tags WHERE tag_id = ?");
+        sqlite3_bind_int(fileStmt.get(), 1, tagId);
+        uint32_t fileCount = 0;
+        if (sqlite3_step(fileStmt.get()) == SQLITE_ROW) {
+            fileCount = static_cast<uint32_t>(sqlite3_column_int(fileStmt.get(), 0));
+        }
+        
+        tagCounts.emplace_back(TagCount{TagStr{tag, isCharacter}, tagId, count, fileCount});
     }
     return tagCounts;
 }
@@ -1079,7 +1179,21 @@ std::vector<PlatformTagCount> PicDatabase::getPlatformTagCounts() const {
         auto platform = static_cast<PlatformType>(sqlite3_column_int(stmt.get(), 1));
         std::string tag = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
         uint32_t count = sqlite3_column_int(stmt.get(), 3);
-        tagCounts.emplace_back(PlatformTagCount{PlatformTagStr{platform, tag}, tagId, count});
+        
+        SQLiteStatement fileStmt = prepare(R"(
+            SELECT COUNT(DISTINCT p.id)
+            FROM pictures p
+            JOIN picture_source ps ON p.id = ps.id
+            JOIN picture_metadata_tags pmt ON ps.platform = pmt.platform AND ps.platform_id = pmt.platform_id
+            WHERE pmt.tag_id = ?
+        )");
+        sqlite3_bind_int(fileStmt.get(), 1, tagId);
+        uint32_t fileCount = 0;
+        if (sqlite3_step(fileStmt.get()) == SQLITE_ROW) {
+            fileCount = static_cast<uint32_t>(sqlite3_column_int(fileStmt.get(), 0));
+        }
+        
+        tagCounts.emplace_back(PlatformTagCount{PlatformTagStr{platform, tag}, tagId, count, fileCount});
     }
     return tagCounts;
 }
@@ -1197,4 +1311,229 @@ void PicDatabase::updatePicTags(uint64_t picID,
     if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
         Error() << "Failed to update pictures restrict_type and feature_hash: " << sqlite3_errmsg(db);
     }
+}
+
+bool PicDatabase::classifyPlatformTag(PlatformType platform, const std::string& tag, bool isCharacter) const {
+    SQLiteStatement stmt = prepare(R"(
+        INSERT OR REPLACE INTO platform_tag_classification(platform, tag, is_character)
+        VALUES (?, ?, ?)
+    )");
+    sqlite3_bind_int(stmt.get(), 1, static_cast<int>(platform));
+    sqlite3_bind_text(stmt.get(), 2, tag.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt.get(), 3, isCharacter ? 1 : 0);
+    
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        Error() << "Failed to classify platform tag: " << sqlite3_errmsg(db);
+        return false;
+    }
+    return true;
+}
+
+std::optional<bool> PicDatabase::getPlatformTagClassification(PlatformType platform, const std::string& tag) const {
+    SQLiteStatement stmt = prepare(R"(
+        SELECT is_character FROM platform_tag_classification
+        WHERE platform = ? AND tag = ?
+    )");
+    sqlite3_bind_int(stmt.get(), 1, static_cast<int>(platform));
+    sqlite3_bind_text(stmt.get(), 2, tag.c_str(), -1, SQLITE_TRANSIENT);
+    
+    if (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        return sqlite3_column_int(stmt.get(), 0) != 0;
+    }
+    return std::nullopt;
+}
+
+std::unordered_map<std::string, bool> PicDatabase::getAllPlatformTagClassifications(PlatformType platform) const {
+    std::unordered_map<std::string, bool> classifications;
+    SQLiteStatement stmt = prepare(R"(
+        SELECT tag, is_character FROM platform_tag_classification
+        WHERE platform = ?
+    )");
+    sqlite3_bind_int(stmt.get(), 1, static_cast<int>(platform));
+    
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        std::string tag = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0));
+        bool isCharacter = sqlite3_column_int(stmt.get(), 1) != 0;
+        classifications[tag] = isCharacter;
+    }
+    return classifications;
+}
+
+bool PicDatabase::deletePlatformTagClassification(PlatformType platform, const std::string& tag) const {
+    SQLiteStatement stmt = prepare(R"(
+        DELETE FROM platform_tag_classification
+        WHERE platform = ? AND tag = ?
+    )");
+    sqlite3_bind_int(stmt.get(), 1, static_cast<int>(platform));
+    sqlite3_bind_text(stmt.get(), 2, tag.c_str(), -1, SQLITE_TRANSIENT);
+    
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        Error() << "Failed to delete platform tag classification: " << sqlite3_errmsg(db);
+        return false;
+    }
+    return true;
+}
+void PicDatabase::syncClassifiedPlatformTagsToPictureTags() const {
+    Info() << "Syncing classified platform tags to picture_tags...";
+    
+    std::unordered_map<std::string, bool> pixivClassifications = getAllPlatformTagClassifications(PlatformType::Pixiv);
+    if (pixivClassifications.empty()) {
+        Info() << "No platform tag classifications to sync.";
+        return;
+    }
+    
+    Info() << "Found" << pixivClassifications.size() << "classified platform tags";
+    
+    beginTransaction();
+    
+    for (const auto& [tag, isCharacter] : pixivClassifications) {
+        SQLiteStatement stmt;
+        
+        stmt = prepare(R"(
+            SELECT tag_id FROM tags WHERE tag = ?
+        )");
+        sqlite3_bind_text(stmt.get(), 1, tag.c_str(), -1, SQLITE_TRANSIENT);
+        
+        uint32_t aiTagId;
+        if (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            aiTagId = static_cast<uint32_t>(sqlite3_column_int(stmt.get(), 0));
+            SQLiteStatement updateCharStmt = prepare(R"(
+                UPDATE tags SET is_character = ? WHERE tag_id = ?
+            )");
+            sqlite3_bind_int(updateCharStmt.get(), 1, isCharacter ? 1 : 0);
+            sqlite3_bind_int(updateCharStmt.get(), 2, aiTagId);
+            sqlite3_step(updateCharStmt.get());
+        } else {
+            SQLiteStatement insertStmt = prepare(R"(
+                INSERT INTO tags(tag, is_character) VALUES (?, ?)
+            )");
+            sqlite3_bind_text(insertStmt.get(), 1, tag.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(insertStmt.get(), 2, isCharacter ? 1 : 0);
+            if (sqlite3_step(insertStmt.get()) != SQLITE_DONE) {
+                Error() << "Failed to insert tag:" << tag;
+                continue;
+            }
+            
+            SQLiteStatement getIdStmt = prepare(R"(
+                SELECT last_insert_rowid()
+            )");
+            sqlite3_step(getIdStmt.get());
+            aiTagId = static_cast<uint32_t>(sqlite3_column_int(getIdStmt.get(), 0));
+        }
+        
+        uint32_t picCount = 0;
+        
+        stmt = prepare(R"(
+            SELECT p.id
+            FROM pictures p
+            JOIN picture_source ps ON p.id = ps.id
+            JOIN picture_metadata_tags pmt ON ps.platform = pmt.platform AND ps.platform_id = pmt.platform_id
+            JOIN platform_tags pt ON pmt.tag_id = pt.tag_id
+            WHERE pt.tag = ?
+        )");
+        sqlite3_bind_text(stmt.get(), 1, tag.c_str(), -1, SQLITE_TRANSIENT);
+        
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            uint64_t picId = static_cast<uint64_t>(sqlite3_column_int64(stmt.get(), 0));
+            
+            SQLiteStatement insertStmt = prepare(R"(
+                INSERT OR IGNORE INTO picture_tags(id, tag_id, probability) VALUES (?, ?, 1.0)
+            )");
+            sqlite3_bind_int64(insertStmt.get(), 1, static_cast<int64_t>(picId));
+            sqlite3_bind_int(insertStmt.get(), 2, aiTagId);
+            sqlite3_step(insertStmt.get());
+        }
+        
+        SQLiteStatement countStmt = prepare(R"(
+            SELECT COUNT(DISTINCT pmt.platform_id)
+            FROM picture_metadata_tags pmt
+            JOIN platform_tags pt ON pmt.tag_id = pt.tag_id
+            WHERE pt.tag = ?
+        )");
+        sqlite3_bind_text(countStmt.get(), 1, tag.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(countStmt.get()) == SQLITE_ROW) {
+            picCount = static_cast<uint32_t>(sqlite3_column_int(countStmt.get(), 0));
+        }
+        
+        SQLiteStatement updateStmt = prepare(R"(
+            UPDATE tags SET count = ? WHERE tag_id = ?
+        )");
+        sqlite3_bind_int(updateStmt.get(), 1, picCount);
+        sqlite3_bind_int(updateStmt.get(), 2, aiTagId);
+        if (sqlite3_step(updateStmt.get()) != SQLITE_DONE) {
+            Error() << "Failed to update tag count for:" << tag;
+        }
+        
+        Info() << "Synced tag:" << tag << "with" << picCount << "works";
+    }
+    
+    commitTransaction();
+    Info() << "Sync completed.";
+}
+
+std::optional<uint32_t> PicDatabase::getAITagIdByTagText(const std::string& tagText) const {
+    SQLiteStatement stmt = prepare(R"(
+        SELECT tag_id FROM tags WHERE tag = ?
+    )");
+    sqlite3_bind_text(stmt.get(), 1, tagText.c_str(), -1, SQLITE_TRANSIENT);
+    
+    if (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        return static_cast<uint32_t>(sqlite3_column_int(stmt.get(), 0));
+    }
+    return std::nullopt;
+}
+
+bool PicDatabase::deleteAITag(uint32_t tagId) const {
+    SQLiteStatement stmt = prepare(R"(
+        DELETE FROM tags WHERE tag_id = ?
+    )");
+    sqlite3_bind_int(stmt.get(), 1, tagId);
+    
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        Error() << "Failed to delete AI tag: " << sqlite3_errmsg(db);
+        return false;
+    }
+    return true;
+}
+
+bool PicDatabase::deleteAITag(const std::string& tagText) const {
+    SQLiteStatement findStmt = prepare(R"(
+        SELECT tag_id FROM tags WHERE tag = ?
+    )");
+    sqlite3_bind_text(findStmt.get(), 1, tagText.c_str(), -1, SQLITE_TRANSIENT);
+    
+    if (sqlite3_step(findStmt.get()) != SQLITE_ROW) {
+        Warn() << "AI tag not found for deletion:" << tagText;
+        return false;
+    }
+    uint32_t tagId = sqlite3_column_int(findStmt.get(), 0);
+    
+    SQLiteStatement delPictureTags = prepare(R"(
+        DELETE FROM picture_tags WHERE tag_id = ?
+    )");
+    sqlite3_bind_int(delPictureTags.get(), 1, tagId);
+    sqlite3_step(delPictureTags.get());
+    
+    SQLiteStatement delTag = prepare(R"(
+        DELETE FROM tags WHERE tag_id = ?
+    )");
+    sqlite3_bind_int(delTag.get(), 1, tagId);
+    
+    if (sqlite3_step(delTag.get()) != SQLITE_DONE) {
+        Error() << "Failed to delete AI tag: " << sqlite3_errmsg(db);
+        return false;
+    }
+    return true;
+}
+
+std::optional<PlatformType> PicDatabase::getPlatformTypeByTagText(const std::string& tagText) const {
+    SQLiteStatement stmt = prepare(R"(
+        SELECT platform FROM platform_tags WHERE tag = ? LIMIT 1
+    )");
+    sqlite3_bind_text(stmt.get(), 1, tagText.c_str(), -1, SQLITE_TRANSIENT);
+    
+    if (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        return static_cast<PlatformType>(sqlite3_column_int(stmt.get(), 0));
+    }
+    return std::nullopt;
 }

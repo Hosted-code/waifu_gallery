@@ -20,6 +20,7 @@
 #include "model.h"
 #include "parser.h"
 #include "utils/logger.h"
+#include "utils/paths.h"
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -32,8 +33,6 @@
 using ProgressCallback = std::function<void(size_t processed, size_t total)>;
 
 enum class SearchField { None, PlatformID, AuthorID, AuthorName, AuthorNick, Title };
-
-const std::string DEFAULT_DATABASE_FILE = "database.db";
 
 enum class DbMode { None, Normal, Import, Query };
 
@@ -78,7 +77,7 @@ public:
         return instance;
     }
     bool tagMappingLoaded() const {
-        return !tagToId.empty() && !platformTagToId.empty() && !tags.empty() && !platformTags.empty();
+        return !platformTagById.empty() || !tagById.empty();
     }
     bool featureHashCacheLoaded() const { return !picFeatureHashes.empty(); }
     bool importedFileLoaded() const { return !importedFiles.empty(); }
@@ -86,12 +85,16 @@ public:
     void loadTagMapping(std::unordered_map<std::string, uint32_t>&& tagToIdMap,
                         std::unordered_map<PlatformTagStr, uint32_t>&& platformTagToIdMap,
                         std::vector<TagStr>&& tagList,
-                        std::vector<PlatformTagStr>&& platformTagList) {
+                        std::vector<PlatformTagStr>&& platformTagList,
+                        std::unordered_map<uint32_t, TagStr>&& tagByIdMap,
+                        std::unordered_map<uint32_t, PlatformTagStr>&& platformTagByIdMap) {
         std::lock_guard<std::mutex> lock(writeMutex);
         tagToId = tagToIdMap;
         platformTagToId = platformTagToIdMap;
         tags = tagList;
         platformTags = platformTagList;
+        tagById = tagByIdMap;
+        platformTagById = platformTagByIdMap;
     }
     void loadPicFeatureHashes(std::vector<std::pair<uint64_t, std::array<uint8_t, 64>>>&& featureHashes) {
         std::lock_guard<std::mutex> lock(writeMutex);
@@ -103,14 +106,16 @@ public:
     }
 
     TagStr getStringTag(uint32_t tagId) const {
-        if (tagId < tags.size()) {
-            return tags[tagId];
+        auto it = tagById.find(tagId);
+        if (it != tagById.end()) {
+            return it->second;
         }
         return TagStr{};
     }
     PlatformTagStr getPlatformStringTag(uint32_t tagId) const {
-        if (tagId < platformTags.size()) {
-            return platformTags[tagId];
+        auto it = platformTagById.find(tagId);
+        if (it != platformTagById.end()) {
+            return it->second;
         }
         return PlatformTagStr{};
     }
@@ -143,9 +148,18 @@ public:
         }
         std::lock_guard<std::mutex> lock(writeMutex);
         platformTags.emplace_back(tag);
-        auto newId = static_cast<uint32_t>(platformTags.size());
+        uint32_t maxId = 0;
+        for (const auto& [id, _] : platformTagById) { if (id > maxId) maxId = id; }
+        uint32_t newId = maxId + 1;
         platformTagToId[tag] = newId;
+        platformTagById[newId] = tag;
         return newId;
+    }
+    void addPlatformTagWithId(const PlatformTagStr& tag, uint32_t id) {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        platformTags.emplace_back(tag);
+        platformTagToId[tag] = id;
+        platformTagById[id] = tag;
     }
     uint32_t getPlatformTagId(const PlatformTagStr& tag) const { return platformTagToId.at(tag); }
 
@@ -155,6 +169,8 @@ public:
         platformTagToId.clear();
         tags.clear();
         platformTags.clear();
+        tagById.clear();
+        platformTagById.clear();
     }
 
 private:
@@ -170,8 +186,10 @@ private:
     // in-memory tag mapping
     std::unordered_map<std::string, uint32_t> tagToId;
     std::unordered_map<PlatformTagStr, uint32_t> platformTagToId;
-    std::vector<TagStr> tags;                 // index is tag ID
-    std::vector<PlatformTagStr> platformTags; // index is platform tag ID
+    std::vector<TagStr> tags;
+    std::vector<PlatformTagStr> platformTags;
+    std::unordered_map<uint32_t, TagStr> tagById;
+    std::unordered_map<uint32_t, PlatformTagStr> platformTagById;
 
     // feature hash cache for similarity search
     std::vector<std::pair<uint64_t, std::array<uint8_t, 64>>> picFeatureHashes; // (picID, featureHash)
@@ -182,8 +200,8 @@ private:
 
 class PicDatabase { // sqlite database wrapper
 public:
-    PicDatabase(const std::string& databaseFile = DEFAULT_DATABASE_FILE, DbMode mode = DbMode::Normal);
-    explicit PicDatabase(DbMode mode) : PicDatabase(DEFAULT_DATABASE_FILE, mode) {}
+    PicDatabase(const std::string& databaseFile = "", DbMode mode = DbMode::Normal);
+    explicit PicDatabase(DbMode mode) : PicDatabase("", mode) {}
     ~PicDatabase();
 
     // transaction and mode management
@@ -243,6 +261,19 @@ public:
     std::vector<PlatformTagCount> getPlatformTagCounts() const;
     TagStr getStringTag(uint32_t tagId) const { return cache.getStringTag(tagId); }
     PlatformTagStr getPlatformStringTag(uint32_t tagId) const { return cache.getPlatformStringTag(tagId); }
+    
+    // platform tag classification
+    bool classifyPlatformTag(PlatformType platform, const std::string& tag, bool isCharacter) const;
+    bool deletePlatformTagClassification(PlatformType platform, const std::string& tag) const;
+    std::optional<bool> getPlatformTagClassification(PlatformType platform, const std::string& tag) const;
+    std::unordered_map<std::string, bool> getAllPlatformTagClassifications(PlatformType platform) const;
+    void syncClassifiedPlatformTagsToPictureTags() const;
+    std::optional<uint32_t> getAITagIdByTagText(const std::string& tagText) const;
+    bool deleteAITag(uint32_t tagId) const;
+    bool deleteAITag(const std::string& tagText) const;
+    std::optional<PlatformType> getPlatformTypeByTagText(const std::string& tagText) const;
+
+    void refreshTagMapping() const;
 
     // insert functions
     bool insertPicture(const ParsedPicture& picInfo) const;

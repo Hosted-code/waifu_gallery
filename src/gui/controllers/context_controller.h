@@ -67,6 +67,7 @@ struct SearchContext {
     std::unordered_set<uint32_t> excludedTags;
     std::unordered_set<uint32_t> includedPlatformTags;
     std::unordered_set<uint32_t> excludedPlatformTags;
+    FilterContext filterCtx;
 };
 
 inline bool isMatchFilter(const PicInfo& pic, const FilterContext& filterCtx) {

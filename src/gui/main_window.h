@@ -151,6 +151,12 @@ private:
     void clearSearchText();
     // pic tag search handlers
     void handleListWidgetItemSingleClick(QListWidgetItem* item);
+    void handlePlatformTagContextMenu(const QPoint& pos);
+    void handleAITagContextMenu(const QPoint& pos);
+    void handleSetTagAsCharacter();
+    void handleSetTagAsAttribute();
+    void handleClearTagClassification();
+    void syncClassifiedPlatformTags();
     QListWidgetItem* lastClickedTagItem = nullptr;
     void addIncludedTags();
     void addExcludedTags(QListWidgetItem* item);

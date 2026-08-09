@@ -18,12 +18,17 @@
 
 #include "worker.h"
 #include "service/database.h"
+#include <cstring>
 #include <QImageReader>
 
 DatabaseWorker::DatabaseWorker(QObject* parent) : QObject(parent), database{DbMode::Query} { // search worker
 }
 DatabaseWorker::~DatabaseWorker() {}
+
 void DatabaseWorker::searchPics(const SearchContext& searchCtx, size_t requestId) {
+    if (!DbCache::getInstance().tagMappingLoaded()) {
+        database.refreshTagMapping();
+    }
 
     const std::unordered_set<uint32_t>& includedTags = searchCtx.includedTags;
     const std::unordered_set<uint32_t>& excludedTags = searchCtx.excludedTags;
@@ -32,6 +37,7 @@ void DatabaseWorker::searchPics(const SearchContext& searchCtx, size_t requestId
     PlatformType platform = searchCtx.searchPlatform;
     SearchField searchField = searchCtx.searchField;
     const std::string& searchText = searchCtx.searchText;
+    const FilterContext& filterCtx = searchCtx.filterCtx;
 
     bool tagSearchApplied = !includedTags.empty() || !excludedTags.empty();
     bool platformTagSearchApplied = !includedPlatformTags.empty() || !excludedPlatformTags.empty();
@@ -45,10 +51,16 @@ void DatabaseWorker::searchPics(const SearchContext& searchCtx, size_t requestId
         displayType = DisplayItemType::Pic;
     }
 
+    // Handle empty search criteria: when no filters applied, show all pictures
+    bool noFiltersApplied = includedTags.empty() && excludedTags.empty() && 
+                            includedPlatformTags.empty() && excludedPlatformTags.empty() &&
+                            !textSearchApplied;
+    
     // skip search if criteria unchanged
     // the search feature includes three parts: tag search, platform tag search, text search
     // each part can be cached separately, no need to redo the part if criteria unchanged
-    if (includedTags != lastIncludedTags || excludedTags != lastExcludedTags) {
+    bool needTagSearch = noFiltersApplied || (includedTags != lastIncludedTags || excludedTags != lastExcludedTags);
+    if (needTagSearch) {
         lastIncludedTags = includedTags;
         lastExcludedTags = excludedTags;
         lastTagSearchResult = database.tagSearch(includedTags, excludedTags);
@@ -95,8 +107,10 @@ void DatabaseWorker::searchPics(const SearchContext& searchCtx, size_t requestId
         size_t metadataIdx = 0;
         size_t picIdx = 0;
         for (const auto& platformID : intersectedResult) {
+            Metadata metadata = database.getMetadata(platformID);
+            if (!isMatchFilter(metadata, filterCtx)) continue;
             auto picIds = database.getMetadataPicIds(platformID);
-            displayItems->metadataItems.emplace_back(MetadataItem{database.getMetadata(platformID), picIdx, picIds.size()});
+            displayItems->metadataItems.emplace_back(MetadataItem{std::move(metadata), picIdx, picIds.size()});
             for (const auto& picId : picIds) {
                 displayItems->picItems.emplace_back(PicItem{database.getPicInfo(picId), metadataIdx, 1});
                 picIdx++;
@@ -175,6 +189,7 @@ void DatabaseWorker::searchPics(const SearchContext& searchCtx, size_t requestId
         size_t metadataIdx = 0;
         for (const auto& id : intersectedResult) {
             PicInfo picInfo = database.getPicInfo(id);
+            if (!isMatchFilter(picInfo, filterCtx)) continue;
             displayItems->picItems.emplace_back(PicItem{picInfo, metadataIdx, picInfo.sourceIdentifiers.size()});
             for (const auto& identifier : picInfo.sourceIdentifiers) {
                 displayItems->metadataItems.emplace_back(MetadataItem{database.getMetadata(identifier), picIdx, 1});

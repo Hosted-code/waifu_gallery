@@ -30,7 +30,7 @@ constexpr int MAX_PREPROCESS_QUEUE_SIZE = 32;
 
 class Tagger {
 public:
-    Tagger(ProgressCallback progressCallBack = nullptr, const std::string& databaseFile = DEFAULT_DATABASE_FILE)
+    Tagger(ProgressCallback progressCallBack = nullptr, const std::string& databaseFile = "")
         : progressCallBack(progressCallBack), databaseFileStr(databaseFile) {};
     ~Tagger();
 

@@ -63,11 +63,13 @@ struct TagCount { // for gui tag selection panel display
     TagStr tag;
     uint32_t tagId = 0;
     uint32_t count = 0;
+    uint32_t fileCount = 0;
 };
 struct PlatformTagCount { // for gui tag selection panel display
     PlatformTagStr tag;
     uint32_t tagId = 0;
     uint32_t count = 0;
+    uint32_t fileCount = 0;
 };
 namespace std {
 template <> struct hash<PlatformTagStr> {

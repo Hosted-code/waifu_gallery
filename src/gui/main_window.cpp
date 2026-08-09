@@ -16,6 +16,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <QMenu>
+#include <QMessageBox>
+#include <QFileDialog>
 #include "main_window.h"
 #include "controllers/utils.h"
 #include "service/database.h"
@@ -161,6 +164,12 @@ void MainWindow::connectSignalSlots() {
     connect(ui->characterTagList, &QListWidget::itemClicked, this, &MainWindow::handleListWidgetItemSingleClick);
     connect(ui->characterTagList, &QListWidget::itemDoubleClicked, this, &MainWindow::addExcludedTags);
     connect(ui->platformTagList, &QListWidget::itemClicked, this, &MainWindow::handleListWidgetItemSingleClick);
+    ui->generalTagList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->generalTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handleAITagContextMenu);
+    ui->characterTagList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->characterTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handleAITagContextMenu);
+    ui->platformTagList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->platformTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handlePlatformTagContextMenu);
     connect(ui->platformTagList, &QListWidget::itemDoubleClicked, this, &MainWindow::addExcludedTags);
     connect(&tagClickTimer, &QTimer::timeout, this, &MainWindow::addIncludedTags);
     connect(&tagSearchTimer, &QTimer::timeout, this, &MainWindow::picSearch);
@@ -188,13 +197,17 @@ void MainWindow::connectSignalSlots() {
     connect(ui->cancelProgressButton, &QPushButton::clicked, this, &MainWindow::cancelTask);
 }
 QString getTagString(const TagCount& tagCount) {
+    if (tagCount.fileCount > 0 && tagCount.count != tagCount.fileCount) {
+        return QString("%1 (%2/%3)").arg(QString::fromStdString(tagCount.tag.tag)).arg(tagCount.count).arg(tagCount.fileCount);
+    }
     return QString("%1 (%2)").arg(QString::fromStdString(tagCount.tag.tag)).arg(tagCount.count);
 }
 QString getTagString(const PlatformTagCount& tagCount) {
-    return QString("[%1] %2 (%3)")
-        .arg(platformTypeToString(tagCount.tag.platform))
-        .arg(QString::fromStdString(tagCount.tag.tag))
-        .arg(tagCount.count);
+    QString base = QString("[%1] %2").arg(platformTypeToString(tagCount.tag.platform)).arg(QString::fromStdString(tagCount.tag.tag));
+    if (tagCount.fileCount > 0 && tagCount.count != tagCount.fileCount) {
+        return QString("%1 (%2/%3)").arg(base).arg(tagCount.count).arg(tagCount.fileCount);
+    }
+    return QString("%1 (%2)").arg(base).arg(tagCount.count);
 }
 void MainWindow::loadTags() {
     allTags = database.getTagCounts();
@@ -220,34 +233,45 @@ void MainWindow::displayTags(const std::vector<TagCount>& availableTags,
 
     QStringList generalTagNames;
     QStringList characterTagNames;
-    for (const auto& tagCount : tagCounts) {
-        if (tagCount.tag.isCharacter) { // determine if it's a character tag
-            characterTagNames.append(getTagString(tagCount));
+    QList<int> generalTagIndices;
+    QList<int> characterTagIndices;
+    for (int i = 0; i < (int)tagCounts.size(); i++) {
+        if (tagCounts[i].tag.isCharacter) {
+            characterTagNames.append(getTagString(tagCounts[i]));
+            characterTagIndices.append(i);
         } else {
-            generalTagNames.append(getTagString(tagCount));
+            generalTagNames.append(getTagString(tagCounts[i]));
+            generalTagIndices.append(i);
         }
     }
     ui->generalTagList->addItems(generalTagNames);
     ui->characterTagList->addItems(characterTagNames);
-    size_t generalTagIndex = 0;
-    size_t characterTagIndex = 0;
-    for (const auto& tagCount : tagCounts) {
-        if (tagCount.tag.isCharacter) { // determine if it's a character tag
-            ui->characterTagList->item(characterTagIndex)->setData(Qt::UserRole, tagCount.tagId);
-            characterTagIndex++;
-        } else {
-            ui->generalTagList->item(generalTagIndex)->setData(Qt::UserRole, tagCount.tagId);
-            generalTagIndex++;
-        }
+    for (int i = 0; i < generalTagNames.size(); i++) {
+        ui->generalTagList->item(i)->setData(Qt::UserRole, tagCounts[generalTagIndices[i]].tagId);
+        ui->generalTagList->item(i)->setData(Qt::UserRole + 1, QString::fromStdString(tagCounts[generalTagIndices[i]].tag.tag));
+    }
+    for (int i = 0; i < characterTagNames.size(); i++) {
+        ui->characterTagList->item(i)->setData(Qt::UserRole, tagCounts[characterTagIndices[i]].tagId);
+        ui->characterTagList->item(i)->setData(Qt::UserRole + 1, QString::fromStdString(tagCounts[characterTagIndices[i]].tag.tag));
     }
 
+    auto pixivClassifications = database.getAllPlatformTagClassifications(PlatformType::Pixiv);
     QStringList platformTagNames;
     for (const auto& tagCount : platformTagCounts) {
-        platformTagNames.append(getTagString(tagCount));
+        auto it = pixivClassifications.find(tagCount.tag.tag);
+        if (it == pixivClassifications.end()) {
+            platformTagNames.append(getTagString(tagCount));
+        }
     }
     ui->platformTagList->addItems(platformTagNames);
-    for (size_t i = 0; i < platformTagCounts.size(); i++) {
-        ui->platformTagList->item(i)->setData(Qt::UserRole, platformTagCounts[i].tagId);
+    int platformTagIndex = 0;
+    for (const auto& tagCount : platformTagCounts) {
+        auto it = pixivClassifications.find(tagCount.tag.tag);
+        if (it == pixivClassifications.end()) {
+            ui->platformTagList->item(platformTagIndex)->setData(Qt::UserRole, tagCount.tagId);
+            ui->platformTagList->item(platformTagIndex)->setData(Qt::UserRole + 1, QString::fromStdString(tagCount.tag.tag));
+            platformTagIndex++;
+        }
     }
 }
 void MainWindow::initTagger() {
@@ -270,66 +294,82 @@ void MainWindow::initTagger() {
 void MainWindow::updateShowUnknowPlatform(bool checked) {
     filterCtx.showUnknowPlatform = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowPixiv(bool checked) {
     filterCtx.showPixiv = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowTwitter(bool checked) {
     filterCtx.showTwitter = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowJPG(bool checked) {
     filterCtx.showJPG = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowPNG(bool checked) {
     filterCtx.showPNG = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowGIF(bool checked) {
     filterCtx.showGIF = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowWEBP(bool checked) {
     filterCtx.showWEBP = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowUnknowRestrict(bool checked) {
     filterCtx.showUnknowRestrict = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowAllAge(bool checked) {
     filterCtx.showAllAge = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowSensitive(bool checked) {
     filterCtx.showSensitive = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowQuestionable(bool checked) {
     filterCtx.showQuestionable = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowR18(bool checked) {
     filterCtx.showR18 = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowR18g(bool checked) {
     filterCtx.showR18G = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowUnknowAI(bool checked) {
     filterCtx.showUnknowAI = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowAI(bool checked) {
     filterCtx.showAI = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateShowNonAI(bool checked) {
     filterCtx.showNonAI = checked;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateMaxWidth(const QString& text) {
     bool ok;
@@ -377,9 +417,11 @@ void MainWindow::clearResolutionFilters() {
     filterCtx.maxHeight = std::numeric_limits<uint>::max();
     filterCtx.minHeight = 0;
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::handleResolutionTimerTimeout() {
     displayController.setFilterContext(filterCtx);
+    picSearch();
 }
 void MainWindow::updateSortBy(int index) {
     sortCtx.sortBy = static_cast<SortBy>(index);
@@ -571,7 +613,7 @@ void MainWindow::removeIncludedPlatformTags(QPushButton* button) {
 }
 void MainWindow::removeExcludedPlatformTags(QPushButton* button) {
     uint32_t tag = button->property("tag").toUInt();
-    searchCtx.includedPlatformTags.erase(tag);
+    searchCtx.excludedPlatformTags.erase(tag);
     ui->selectedTagLayout->removeWidget(button);
     button->deleteLater();
     if (isSelectedTagsEmpty()) {
@@ -593,11 +635,7 @@ void MainWindow::tagSearch(const QString& text) {
 // Main search function
 void MainWindow::picSearch() {
     imageLoader.clearTasks();
-    if (isSearchCriteriaEmpty()) {
-        displayTags();
-        return;
-    }
-    ui->statusbar->showMessage("正在搜索...");
+    searchCtx.filterCtx = filterCtx;
     searchRequestId++;
     emit searchPics(searchCtx, searchRequestId);
 }
@@ -708,6 +746,7 @@ void MainWindow::finalizeImport(size_t totalImported) {
         " 秒");
 
     loadTags(); // load new tags from database
+    DbCache::getInstance().clearTagMapping();
     if (isSearchCriteriaEmpty()) {
         picSearch();
     }
@@ -803,6 +842,7 @@ void MainWindow::handleImportNewPicsAction() {
     Info() << "Started importing pictures from directory: " << dir.toStdString();
     taskStartTime = std::chrono::steady_clock::now();
 }
+
 void MainWindow::handleImportPowerfulPixivDownloaderAction() {
     if (haveOngoingTask()) {
         ui->statusbar->showMessage("已有任务正在进行中，请稍后再试。");
@@ -811,8 +851,43 @@ void MainWindow::handleImportPowerfulPixivDownloaderAction() {
     QString dir = QFileDialog::getExistingDirectory(
         this, "选择 Powerful Pixiv Downloader 下载文件夹", QString(), QFileDialog::ShowDirsOnly);
     if (dir.isEmpty()) return;
+
+    std::filesystem::path dirPath(dir.toStdString());
+    if (!directoryHasMetadata(dirPath)) {
+        QMessageBox::StandardButton reply = QMessageBox::question(
+            this, tr("缺少元数据"),
+            tr("该目录没有元数据文件，无法导入标签。\n\n请选择抓取记录文件以生成元数据，或稍后在设置中补充。"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if (reply == QMessageBox::Yes) {
+            QString fetchRecord = QFileDialog::getOpenFileName(
+                this, tr("选择抓取记录文件"), QString(), tr("JSON 文件 (*.json)"));
+            if (!fetchRecord.isEmpty()) {
+                FetchRecordImportResult result = importer.importTagsFromFetchRecord(dirPath, std::filesystem::path(fetchRecord.toStdString()));
+                if (!result.errors.empty()) {
+                    QString errorMsg;
+                    for (const auto& err : result.errors) {
+                        errorMsg += QString::fromStdString(err) + "\n";
+                    }
+                    QMessageBox::warning(this, tr("导入失败"), tr("生成元数据时出错：\n\n%1\n请重新选择或忽略只导入图片。").arg(errorMsg));
+                    reply = QMessageBox::question(
+                        this, tr("继续导入"), tr("是否忽略标签，只导入图片？"),
+                        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+                    if (reply == QMessageBox::No) return;
+                } else if (result.matched == 0) {
+                    QMessageBox::warning(this, tr("未匹配"), tr("抓取记录中未匹配到任何作品。"));
+                    reply = QMessageBox::question(
+                        this, tr("继续导入"), tr("是否忽略标签，只导入图片？"),
+                        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+                    if (reply == QMessageBox::No) return;
+                } else {
+                    Info() << "Generated" << result.matched << "meta.json files, unmatched:" << result.unmatched;
+                }
+            }
+        }
+    }
+
     ui->statusbar->showMessage("正在扫描 Powerful Pixiv Downloader 下载文件夹...");
-    importer.startImportFromDirectory(std::filesystem::path(dir.toStdString()), ParserType::PowerfulPixivDownloader);
+    importer.startImportFromDirectory(dirPath, ParserType::PowerfulPixivDownloader);
     ui->progressWidget->show();
     ui->progressBar->setValue(0);
     ui->progressLabel->setText("正在导入Pixiv图片...");
@@ -872,6 +947,25 @@ void MainWindow::handleShowSettingsAction() {
         settingsDialog = new SettingsDialog(this);
         settingsDialog->setAttribute(Qt::WA_DeleteOnClose);
         connect(settingsDialog, &QObject::destroyed, this, [this]() { settingsDialog = nullptr; });
+        connect(settingsDialog, &SettingsDialog::importTagsRequested, this, [this](const std::filesystem::path& directory, const std::filesystem::path& fetchRecordPath) {
+            FetchRecordImportResult result = importer.importTagsFromFetchRecord(directory, fetchRecordPath);
+            if (!result.errors.empty()) {
+                QString errorMsg;
+                for (const auto& err : result.errors) {
+                    errorMsg += QString::fromStdString(err) + "\n";
+                }
+                QMessageBox::warning(this, tr("导入标签失败"), tr("生成元数据时出错：\n\n%1").arg(errorMsg));
+            } else if (result.matched == 0) {
+                QMessageBox::warning(this, tr("未匹配"), tr("抓取记录中未匹配到任何作品。"));
+            } else {
+                QMessageBox::information(this, tr("导入成功"), tr("成功匹配 %1 个作品，未匹配 %2 个。正在重新导入标签...").arg(result.matched).arg(result.unmatched));
+                importer.startImportFromDirectory(directory, ParserType::PowerfulPixivDownloader);
+                ui->progressWidget->show();
+                ui->progressBar->setValue(0);
+                ui->progressLabel->setText("正在导入标签...");
+                taskStartTime = std::chrono::steady_clock::now();
+            }
+        });
     }
     settingsDialog->show();
     settingsDialog->raise();
@@ -900,4 +994,78 @@ void MainWindow::handleStartTaggingAction() {
     ui->progressLabel->setText(progressLabelText);
     Info() << "Started tagging pictures with tagger.";
     taskStartTime = std::chrono::steady_clock::now();
+}
+
+void MainWindow::handlePlatformTagContextMenu(const QPoint& pos) {
+    QListWidgetItem* item = ui->platformTagList->itemAt(pos);
+    if (!item) return;
+    
+    QString tagText = item->data(Qt::UserRole + 1).toString();
+    
+    QMenu contextMenu(tr("标签分类"), this);
+    QAction* characterAction = contextMenu.addAction(tr("设为角色"));
+    QAction* attributeAction = contextMenu.addAction(tr("设为属性"));
+    
+    QAction* selectedAction = contextMenu.exec(ui->platformTagList->mapToGlobal(pos));
+    
+    if (selectedAction == characterAction) {
+        if (database.classifyPlatformTag(PlatformType::Pixiv, tagText.toStdString(), true)) {
+            Info() << "Tag classified as character:" << tagText.toStdString();
+            database.syncClassifiedPlatformTagsToPictureTags();
+            loadTags();
+            displayTags();
+        }
+    } else if (selectedAction == attributeAction) {
+        if (database.classifyPlatformTag(PlatformType::Pixiv, tagText.toStdString(), false)) {
+            Info() << "Tag classified as attribute:" << tagText.toStdString();
+            database.syncClassifiedPlatformTagsToPictureTags();
+            loadTags();
+            displayTags();
+        }
+    }
+}
+
+void MainWindow::handleAITagContextMenu(const QPoint& pos) {
+    QListWidget* listWidget = qobject_cast<QListWidget*>(sender());
+    if (!listWidget) return;
+    
+    QListWidgetItem* item = listWidget->itemAt(pos);
+    if (!item) return;
+    
+    QString tagText = item->data(Qt::UserRole + 1).toString();
+    
+    QMenu contextMenu(tr("标签管理"), this);
+    QAction* deleteAction = contextMenu.addAction(tr("删除分类，恢复为平台标签"));
+    
+    QAction* selectedAction = contextMenu.exec(listWidget->mapToGlobal(pos));
+    
+    if (selectedAction == deleteAction) {
+        QMessageBox::StandardButton reply = QMessageBox::question(
+            this, tr("确认删除"),
+            tr("确定要删除标签\"%1\"的分类吗？\n\n标签将恢复为普通平台标签。").arg(tagText),
+            QMessageBox::Yes | QMessageBox::No
+        );
+        
+        if (reply == QMessageBox::Yes) {
+            std::string tagStr = tagText.toStdString();
+            Info() << "Deleting AI tag and classification:" << tagStr;
+            
+            database.deleteAITag(tagStr);
+            
+            auto platformOpt = database.getPlatformTypeByTagText(tagStr);
+            if (platformOpt.has_value()) {
+                database.deletePlatformTagClassification(platformOpt.value(), tagStr);
+            }
+            
+            loadTags();
+            displayTags();
+            Info() << "AI tag and classification deleted successfully";
+        }
+    }
+}
+
+void MainWindow::syncClassifiedPlatformTags() {
+    database.syncClassifiedPlatformTagsToPictureTags();
+    loadTags();
+    displayTags();
 }

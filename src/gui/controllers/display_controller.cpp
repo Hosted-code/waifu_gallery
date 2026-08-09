@@ -38,8 +38,8 @@ void DisplayController::setDisplayItems(DisplayItems* displayItems, SearchField 
     this->displayItems = displayItems;
     this->displayMode = this->displayItems->type;
     this->sortedItemIndices.resize(this->displayItems->type == DisplayItemType::Metadata
-                                       ? this->displayItems->metadataItems.size()
-                                       : this->displayItems->picItems.size());
+                                        ? this->displayItems->metadataItems.size()
+                                        : this->displayItems->picItems.size());
     std::iota(this->sortedItemIndices.begin(), this->sortedItemIndices.end(), 0);
     this->picFrames.resize(this->sortedItemIndices.size(), nullptr);
     this->searchField = searchField;
@@ -181,7 +181,9 @@ void DisplayController::displayPicFrames() {
                 break;
             case DisplayItemType::Metadata:
                 metadataItem = &displayItems->metadataItems[displayItemIdx];
-                picItem = &displayItems->picItems[metadataItem->picStartIndex];
+                if (metadataItem->picCount > 0) {
+                    picItem = &displayItems->picItems[metadataItem->picStartIndex];
+                }
                 break;
             }
             PictureFrame* picFrame = picFramePool->acquire(picItem, metadataItem, searchField);
@@ -200,24 +202,25 @@ void DisplayController::displayPicFrames() {
     displaying = true;
 }
 bool DisplayController::fillFilteredItemUntil(int displayIndex) {
-    while (displayIndex >= displayingItemIndices.size()) { // need to find next item that matches filter
+    while (displayIndex >= displayingItemIndices.size()) {
+        bool found = false;
         while (nextMatchSortedIndex < sortedItemIndices.size()) {
+            int itemIdx = sortedItemIndices[nextMatchSortedIndex];
+            nextMatchSortedIndex += 1;
             if (displayMode == DisplayItemType::Pic &&
-                isMatchFilter(displayItems->picItems[sortedItemIndices[nextMatchSortedIndex]].info, filterCtx)) {
-                nextMatchSortedIndex += 1;
+                isMatchFilter(displayItems->picItems[itemIdx].info, filterCtx)) {
+                found = true;
                 break;
             }
             if (displayMode == DisplayItemType::Metadata &&
-                isMatchFilter(displayItems->metadataItems[sortedItemIndices[nextMatchSortedIndex]].metadata, filterCtx)) {
-                nextMatchSortedIndex += 1;
+                isMatchFilter(displayItems->metadataItems[itemIdx].metadata, filterCtx)) {
+                found = true;
                 break;
             }
-            nextMatchSortedIndex += 1;
         }
 
-        if (nextMatchSortedIndex >= sortedItemIndices.size()) return false; // no more items to display
+        if (!found) return false;
 
-        // nextMatchSortedIndex has been incremented, so we need to use nextMatchSortedIndex - 1
         displayingItemIndices.push_back(sortedItemIndices[nextMatchSortedIndex - 1]);
     }
     return true;
