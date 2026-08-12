@@ -42,6 +42,9 @@ QImage* ImageLoader::getImage(uint64_t picId, LoadType loadType) {
 
     } else if (loadType == LoadType::Preview) {
         if (auto img = previewCache.get(picId)) return img;
+
+    } else if (loadType == LoadType::FullSize) {
+        if (auto img = fullSizeCache.get(picId)) return img;
     }
     return nullptr;
 }
@@ -56,12 +59,20 @@ QImage* ImageLoader::getImage(const PicInfo& picInfo, LoadType loadType) {
     }
 
     std::lock_guard<std::mutex> lock(mutex);
-    auto& loadingSet = (loadType == LoadType::Thumbnail) ? loadingThumbnailIds : loadingPreviewIds;
-    if (loadingSet.find(picInfo.id) != loadingSet.end()) {
+    std::unordered_set<uint64_t>* loadingSet = nullptr;
+    if (loadType == LoadType::Thumbnail) {
+        loadingSet = &loadingThumbnailIds;
+    } else if (loadType == LoadType::Preview) {
+        loadingSet = &loadingPreviewIds;
+    } else if (loadType == LoadType::FullSize) {
+        loadingSet = &loadingFullSizeIds;
+    }
+    if (loadingSet && loadingSet->find(picInfo.id) != loadingSet->end()) {
         return nullptr; // already queued or loading
     }
-
-    loadingSet.insert(picInfo.id);
+    if (loadingSet) {
+        loadingSet->insert(picInfo.id);
+    }
     taskQueue.push({loadType, picInfo.id, picInfo.filePaths});
     condVar.notify_one();
     return nullptr;
@@ -72,7 +83,7 @@ void ImageLoader::clearTasks() {
         taskQueue.pop();
     }
     loadingThumbnailIds.clear();
-    loadingPreviewIds.clear();
+    loadingFullSizeIds.clear();
 }
 void ImageLoader::stop() {
     stopFlag.store(true);
@@ -112,8 +123,9 @@ void ImageLoader::workerFunction() {
             Warn() << "Cannot read image format:" << filePathStr;
             {
                 std::lock_guard<std::mutex> lock(mutex);
-                auto& loadingSet = (task.loadType == LoadType::Thumbnail) ? loadingThumbnailIds : loadingPreviewIds;
-                loadingSet.erase(task.id);
+                if (task.loadType == LoadType::Thumbnail) loadingThumbnailIds.erase(task.id);
+                else if (task.loadType == LoadType::Preview) loadingPreviewIds.erase(task.id);
+                else if (task.loadType == LoadType::FullSize) loadingFullSizeIds.erase(task.id);
             }
             continue;
         }
@@ -136,8 +148,9 @@ void ImageLoader::workerFunction() {
             Warn() << "Failed to read image:" << filePathStr << ", Error:" << reader.errorString();
             {
                 std::lock_guard<std::mutex> lock(mutex);
-                auto& loadingSet = (task.loadType == LoadType::Thumbnail) ? loadingThumbnailIds : loadingPreviewIds;
-                loadingSet.erase(task.id);
+                if (task.loadType == LoadType::Thumbnail) loadingThumbnailIds.erase(task.id);
+                else if (task.loadType == LoadType::Preview) loadingPreviewIds.erase(task.id);
+                else if (task.loadType == LoadType::FullSize) loadingFullSizeIds.erase(task.id);
             }
             continue;
         }
@@ -147,12 +160,15 @@ void ImageLoader::workerFunction() {
             thumbnailCache.put(task.id, std::move(img));
         } else if (task.loadType == LoadType::Preview) {
             previewCache.put(task.id, std::move(img));
+        } else if (task.loadType == LoadType::FullSize) {
+            fullSizeCache.put(task.id, std::move(img));
         }
 
         {
             std::lock_guard<std::mutex> lock(mutex);
-            auto& loadingSet = (task.loadType == LoadType::Thumbnail) ? loadingThumbnailIds : loadingPreviewIds;
-            loadingSet.erase(task.id);
+            if (task.loadType == LoadType::Thumbnail) loadingThumbnailIds.erase(task.id);
+            else if (task.loadType == LoadType::Preview) loadingPreviewIds.erase(task.id);
+            else if (task.loadType == LoadType::FullSize) loadingFullSizeIds.erase(task.id);
         }
 
         QCoreApplication::postEvent(mainWindow, new ImageLoadCompleteEvent({task.loadType, task.id}));

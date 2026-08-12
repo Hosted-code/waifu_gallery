@@ -47,7 +47,7 @@ public:
                           SearchField searchField = SearchField::None);
     ~PictureFrame();
 
-    void displayImage(uint64_t picId, LoadType loadType); // asynchronous loaded image will be displayed through this function
+    void displayImage(uint64_t picId, LoadType loadType);
 
     void reset();
     void updateDisplayItem(const PicItem* newPicItem, const MetadataItem* newMetadataItem, SearchField searchField) {

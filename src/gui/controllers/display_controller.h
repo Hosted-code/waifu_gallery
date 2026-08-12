@@ -52,6 +52,9 @@ public:
 
     void setDisplayItems(DisplayItems* displayItems, SearchField searchField);
 
+    const DisplayItems* getDisplayItems() const { return displayItems; }
+    int getDisplayIndex(const PictureFrame* frame) const;
+
     void handleWindowResize();
     void handleScrollBarValueChanged(int value);
 

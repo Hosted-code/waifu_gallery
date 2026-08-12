@@ -21,12 +21,14 @@
 #include "controllers/context_controller.h"
 #include "controllers/display_controller.h"
 #include "controllers/image_loader.h"
+#include "controllers/image_viewer_controller.h"
 #include "controllers/worker.h"
 #include "service/database.h"
 #include "service/importer.h"
 #include "service/model.h"
 #include "service/tagger.h"
 #include "settings_dialog.h"
+#include "widgets/image_viewer.h"
 #include "widgets/picture_frame.h"
 #include <QCoreApplication>
 #include <QListWidgetItem>
@@ -85,6 +87,9 @@ protected:
     bool event(QEvent* event) override;
 
 private:
+    bool handlePictureFrameDoubleClick(QObject* watched, QEvent* event);
+
+private:
     // initialize
     Ui::MainWindow* ui;
     PicDatabase database;
@@ -93,6 +98,8 @@ private:
     Importer importer{reportImportProgress}; // Blazing fast!!!
     Tagger tagger{reportTaggingProgress};
     DisplayController displayController;
+    ImageViewerController viewerController{this};
+    ImageViewerDialog imageViewer{this};
     void initInterface();
     void fillComboBox();
     void initWorkerThreads();
@@ -208,4 +215,5 @@ private:
     bool isSearchCriteriaEmpty() const { return searchCtx.searchText.empty() && isSelectedTagsEmpty(); };
 
     void handleScrollBarValueChanged(int value) { displayController.handleScrollBarValueChanged(value); };
+    void handleOpenViewer(int displayIndex);
 };

@@ -32,10 +32,11 @@
 
 class MainWindow;
 
-enum class LoadType { Thumbnail, Preview };
+enum class LoadType { Thumbnail, Preview, FullSize };
 
 const size_t THUMBNAIL_CACHE_CAPACITY = 200;
 const size_t PREVIEW_CACHE_CAPACITY = 50;
+const size_t FULLSIZE_CACHE_CAPACITY = 10;
 
 struct ImageLoadTask {
     LoadType loadType;
@@ -77,7 +78,9 @@ private:
 
     std::unordered_set<uint64_t> loadingThumbnailIds;
     std::unordered_set<uint64_t> loadingPreviewIds;
+    std::unordered_set<uint64_t> loadingFullSizeIds;
 
     ImageCache thumbnailCache{THUMBNAIL_CACHE_CAPACITY};
     ImageCache previewCache{PREVIEW_CACHE_CAPACITY};
+    ImageCache fullSizeCache{FULLSIZE_CACHE_CAPACITY};
 };

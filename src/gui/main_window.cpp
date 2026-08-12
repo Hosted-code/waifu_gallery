@@ -195,8 +195,9 @@ void MainWindow::connectSignalSlots() {
 
     // cancel progress
     connect(ui->cancelProgressButton, &QPushButton::clicked, this, &MainWindow::cancelTask);
-}
-QString getTagString(const TagCount& tagCount) {
+
+    // image viewer
+}QString getTagString(const TagCount& tagCount) {
     if (tagCount.fileCount > 0 && tagCount.count != tagCount.fileCount) {
         return QString("%1 (%2/%3)").arg(QString::fromStdString(tagCount.tag.tag)).arg(tagCount.count).arg(tagCount.fileCount);
     }
@@ -675,7 +676,10 @@ bool MainWindow::event(QEvent* event) {
     if (event->type() == ImageLoadCompleteEvent::EventType) {
         auto* imageEvent = static_cast<ImageLoadCompleteEvent*>(event);
         displayController.displayImage(imageEvent->result.id, imageEvent->result.loadType);
+        viewerController.handleImageLoaded(imageEvent->result.id, imageEvent->result.loadType);
         return true;
+    } else if (event->type() == QEvent::MouseButtonDblClick) {
+        if (handlePictureFrameDoubleClick(nullptr, event)) return true;
     } else if (event->type() == ImportProgressReportEvent::EventType) {
         auto* importProgressEvent = static_cast<ImportProgressReportEvent*>(event);
         displayImportProgress(importProgressEvent->progress, importProgressEvent->total);
@@ -1068,4 +1072,29 @@ void MainWindow::syncClassifiedPlatformTags() {
     database.syncClassifiedPlatformTagsToPictureTags();
     loadTags();
     displayTags();
+}
+
+void MainWindow::handleOpenViewer(int displayIndex) {
+    const DisplayItems* items = displayController.getDisplayItems();
+    if (!items || displayIndex < 0) return;
+
+    viewerController.setup(items, displayIndex, imageLoader);
+    imageViewer.open(&viewerController);
+}
+
+bool MainWindow::handlePictureFrameDoubleClick(QObject* watched, QEvent* event) {
+    auto* mouseEvent = static_cast<QMouseEvent*>(event);
+    QWidget* widget = QApplication::widgetAt(mouseEvent->globalPosition().toPoint());
+    while (widget) {
+        auto* frame = qobject_cast<PictureFrame*>(widget);
+        if (frame) {
+            int displayIndex = displayController.getDisplayIndex(frame);
+            if (displayIndex >= 0) {
+                handleOpenViewer(displayIndex);
+                return true;
+            }
+        }
+        widget = widget->parentWidget();
+    }
+    return false;
 }

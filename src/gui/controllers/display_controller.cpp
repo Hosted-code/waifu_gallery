@@ -283,3 +283,12 @@ void DisplayController::setFilterContext(const FilterContext& filterContext) {
     clearDisplay();
     displayPicFrames();
 }
+
+int DisplayController::getDisplayIndex(const PictureFrame* frame) const {
+    for (int i = startDisplayIndex; i < endDisplayIndex; ++i) {
+        if (picFrames[i] == frame) {
+            return displayingItemIndices[i];
+        }
+    }
+    return -1;
+}
