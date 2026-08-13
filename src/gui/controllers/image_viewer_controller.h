@@ -3,6 +3,7 @@
 #include "service/model.h"
 #include <QObject>
 #include <QPixmap>
+#include <vector>
 
 class ImageLoader;
 enum class LoadType;
@@ -14,6 +15,12 @@ struct ViewerTransform {
     bool hFlip = false;
     bool vFlip = false;
     bool animPaused = false;
+};
+
+struct TagDisplay {
+    std::string name;
+    bool isCharacter = false;
+    float probability = 0.0f;
 };
 
 class ImageViewerController : public QObject {
@@ -29,6 +36,8 @@ public:
     int currentIndex() const { return index; }
     int totalCount() const;
     const ViewerTransform& transform() const { return xform; }
+
+    std::vector<TagDisplay> currentTagDisplays() const;
 
     void navigateTo(int index);
     void navigateNext();

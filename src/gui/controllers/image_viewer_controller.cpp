@@ -1,5 +1,6 @@
 #include "image_viewer_controller.h"
 #include "image_loader.h"
+#include "service/database.h"
 
 constexpr int PRELOAD_COUNT = 2;
 constexpr double MIN_ZOOM = 0.05;
@@ -155,4 +156,20 @@ void ImageViewerController::emitIndexChanged() {
 
 void ImageViewerController::resetTransform() {
     xform = ViewerTransform{};
+}
+
+std::vector<TagDisplay> ImageViewerController::currentTagDisplays() const {
+    std::vector<TagDisplay> result;
+    const PicInfo* info = currentPicInfo();
+    if (!info) return result;
+
+    result.reserve(info->tags.size());
+    auto& cache = DbCache::getInstance();
+    for (const PicTag& picTag : info->tags) {
+        TagStr tagStr = cache.getStringTag(picTag.tagId);
+        if (!tagStr.tag.empty()) {
+            result.push_back(TagDisplay{tagStr.tag, tagStr.isCharacter, picTag.probability});
+        }
+    }
+    return result;
 }
