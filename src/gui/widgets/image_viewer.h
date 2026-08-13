@@ -4,7 +4,24 @@
 #include <QDialog>
 #include <QGraphicsView>
 #include <QLabel>
+#include <QLineEdit>
 #include <QScrollArea>
+#include <QCompleter>
+
+class TagPill : public QWidget {
+    Q_OBJECT
+public:
+    TagPill(const QString& text, uint32_t tagId, bool isPlatformTag, QWidget* parent = nullptr);
+    uint32_t tagId() const { return m_tagId; }
+    bool isPlatformTag() const { return m_isPlatformTag; }
+
+signals:
+    void removeRequested(uint32_t tagId, bool isPlatformTag);
+
+private:
+    uint32_t m_tagId;
+    bool m_isPlatformTag;
+};
 
 class ImageViewerDialog : public QDialog {
     Q_OBJECT
@@ -20,42 +37,40 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
-    // Image view
     QGraphicsScene* scene;
     QGraphicsView* graphicsView;
     QGraphicsPixmapItem* pixmapItem;
     QLabel* infoLabel;
 
-    // Metadata panel
     QWidget* metadataPanel;
-    QScrollArea* metadataScroll;
     QLabel* fileInfoLabel;
     QLabel* sourceInfoLabel;
-    QLabel* tagsLabel;
+    QWidget* tagsContainer;
+    QLineEdit* tagInput;
+    QCompleter* tagCompleter;
     QLabel* socialLabel;
     QLabel* datesLabel;
     bool metadataPanelVisible = true;
 
-    // Controller
     ImageViewerController* controller = nullptr;
     bool isPanning = false;
     QPoint lastPanPoint;
 
-    // Transform
     void applyTransform(const ViewerTransform& xform);
     void fitToWindow(const ViewerTransform& xform);
     void updateInfoLabel();
     void updateCursor();
 
-    // Metadata panel
     void buildMetadataPanel();
     void populateMetadataPanel();
+    void rebuildTagPills();
     void toggleMetadataPanel();
+    void onTagInputReturnPressed();
 
-    // Slots
     void onImageReady(QPixmap pixmap);
     void onImageLoading();
     void onIndexChanged(int index, int total);
     void onPicInfoChanged(const PicInfo* info, const Metadata* metadata);
     void onTransformChanged(const ViewerTransform& xform);
+    void onTagsChanged();
 };

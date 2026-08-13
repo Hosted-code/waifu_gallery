@@ -1078,7 +1078,7 @@ void MainWindow::handleOpenViewer(int displayIndex) {
     const DisplayItems* items = displayController.getDisplayItems();
     if (!items || displayIndex < 0) return;
 
-    viewerController.setup(items, displayIndex, imageLoader);
+    viewerController.setup(items, displayIndex, imageLoader, database);
     imageViewer.open(&viewerController);
 }
 

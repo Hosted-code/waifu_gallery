@@ -7,6 +7,7 @@
 
 class ImageLoader;
 enum class LoadType;
+class PicDatabase;
 
 struct ViewerTransform {
     double zoomLevel = 1.0;
@@ -18,9 +19,10 @@ struct ViewerTransform {
 };
 
 struct TagDisplay {
+    uint32_t tagId = 0;
     std::string name;
     bool isCharacter = false;
-    float probability = 0.0f;
+    bool isPlatformTag = false;
 };
 
 class ImageViewerController : public QObject {
@@ -28,7 +30,7 @@ class ImageViewerController : public QObject {
 public:
     explicit ImageViewerController(QObject* parent = nullptr);
 
-    void setup(const DisplayItems* items, int startIndex, ImageLoader& loader);
+    void setup(const DisplayItems* items, int startIndex, ImageLoader& loader, PicDatabase& db);
     void reset();
 
     const PicInfo* currentPicInfo() const;
@@ -38,6 +40,10 @@ public:
     const ViewerTransform& transform() const { return xform; }
 
     std::vector<TagDisplay> currentTagDisplays() const;
+
+    void addTag(const std::string& tagName);
+    void removeTag(uint32_t tagId);
+    std::vector<std::string> getTagSuggestions(const std::string& prefix) const;
 
     void navigateTo(int index);
     void navigateNext();
@@ -67,11 +73,13 @@ signals:
     void indexChanged(int index, int total);
     void picInfoChanged(const PicInfo* info, const Metadata* metadata);
     void transformChanged(const ViewerTransform& xform);
+    void tagsChanged();
 
 private:
     const DisplayItems* items = nullptr;
     int index = 0;
     ImageLoader* imageLoader = nullptr;
+    PicDatabase* database = nullptr;
     ViewerTransform xform;
 
     void preloadAdjacent();

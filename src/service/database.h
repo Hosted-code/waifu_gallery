@@ -82,6 +82,8 @@ public:
     bool featureHashCacheLoaded() const { return !picFeatureHashes.empty(); }
     bool importedFileLoaded() const { return !importedFiles.empty(); }
 
+    const std::vector<TagStr>& getTags() const { return tags; }
+
     void loadTagMapping(std::unordered_map<std::string, uint32_t>&& tagToIdMap,
                         std::unordered_map<PlatformTagStr, uint32_t>&& platformTagToIdMap,
                         std::vector<TagStr>&& tagList,
@@ -272,6 +274,12 @@ public:
     bool deleteAITag(uint32_t tagId) const;
     bool deleteAITag(const std::string& tagText) const;
     std::optional<PlatformType> getPlatformTypeByTagText(const std::string& tagText) const;
+
+    // manual tag management
+    bool addTagToPicture(uint64_t picId, uint32_t tagId, float probability = 1.0f) const;
+    bool removeTagFromPicture(uint64_t picId, uint32_t tagId) const;
+    uint32_t addAITag(const std::string& tagName, bool isCharacter = false) const;
+    const std::vector<TagStr>& getAllAITags() const { return cache.getTags(); }
 
     void refreshTagMapping() const;
 

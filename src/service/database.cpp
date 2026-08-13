@@ -1537,3 +1537,62 @@ std::optional<PlatformType> PicDatabase::getPlatformTypeByTagText(const std::str
     }
     return std::nullopt;
 }
+
+bool PicDatabase::addTagToPicture(uint64_t picId, uint32_t tagId, float probability) const {
+    SQLiteStatement stmt = prepare(R"(
+        INSERT OR IGNORE INTO picture_tags(id, tag_id, probability) VALUES (?, ?, ?)
+    )");
+    sqlite3_bind_int64(stmt.get(), 1, uint64_to_int64(picId));
+    sqlite3_bind_int(stmt.get(), 2, static_cast<int>(tagId));
+    sqlite3_bind_double(stmt.get(), 3, static_cast<double>(probability));
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        Error() << "Failed to add tag to picture: " << sqlite3_errmsg(db);
+        return false;
+    }
+
+    SQLiteStatement updateCount = prepare(R"(
+        UPDATE tags SET count = count + 1 WHERE tag_id = ?
+    )");
+    sqlite3_bind_int(updateCount.get(), 1, static_cast<int>(tagId));
+    sqlite3_step(updateCount.get());
+    return true;
+}
+
+bool PicDatabase::removeTagFromPicture(uint64_t picId, uint32_t tagId) const {
+    SQLiteStatement stmt = prepare(R"(
+        DELETE FROM picture_tags WHERE id = ? AND tag_id = ?
+    )");
+    sqlite3_bind_int64(stmt.get(), 1, uint64_to_int64(picId));
+    sqlite3_bind_int(stmt.get(), 2, static_cast<int>(tagId));
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        Error() << "Failed to remove tag from picture: " << sqlite3_errmsg(db);
+        return false;
+    }
+    if (sqlite3_changes(db) > 0) {
+        SQLiteStatement updateCount = prepare(R"(
+            UPDATE tags SET count = MAX(count - 1, 0) WHERE tag_id = ?
+        )");
+        sqlite3_bind_int(updateCount.get(), 1, static_cast<int>(tagId));
+        sqlite3_step(updateCount.get());
+    }
+    return true;
+}
+
+uint32_t PicDatabase::addAITag(const std::string& tagName, bool isCharacter) const {
+    auto existingId = getAITagIdByTagText(tagName);
+    if (existingId.has_value()) return existingId.value();
+
+    SQLiteStatement stmt = prepare(R"(
+        INSERT INTO tags(tag, is_character, count) VALUES (?, ?, 0)
+    )");
+    sqlite3_bind_text(stmt.get(), 1, tagName.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt.get(), 2, isCharacter ? 1 : 0);
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        Error() << "Failed to add AI tag: " << sqlite3_errmsg(db);
+        return 0;
+    }
+    uint32_t newId = static_cast<uint32_t>(sqlite3_last_insert_rowid(db));
+    cache.clearTagMapping();
+    initTagMapping();
+    return newId;
+}
