@@ -235,7 +235,7 @@ void ImageViewerDialog::populateMetadataPanel() {
         lines << QString("%1 x %2").arg(info->width).arg(info->height);
         lines << QString("%1 | %2").arg(imageFormatStr(info->fileType)).arg(formatFileSize(info->size));
         if (!info->filePaths.empty()) {
-            lines << QString::fromStdString(info->filePaths[0].string());
+            lines << QString::fromUtf8(info->filePaths[0].string().c_str());
         }
         lines << QString("Restrict: %1").arg(restrictTypeStr(info->restrictType));
         lines << QString("AI: %1").arg(aiTypeStr(info->aiType));
@@ -248,11 +248,11 @@ void ImageViewerDialog::populateMetadataPanel() {
         QStringList lines;
         lines << QString("Platform: %1").arg(platformTypeStr(meta->platformType));
         lines << QString("ID: %1").arg(meta->id);
-        if (!meta->authorName.empty()) lines << QString("Author: %1").arg(QString::fromStdString(meta->authorName));
-        if (!meta->authorNick.empty()) lines << QString("Nick: %1").arg(QString::fromStdString(meta->authorNick));
-        if (!meta->title.empty()) lines << QString("Title: %1").arg(QString::fromStdString(meta->title));
+        if (!meta->authorName.empty()) lines << QString("Author: %1").arg(QString::fromUtf8(meta->authorName.c_str()));
+        if (!meta->authorNick.empty()) lines << QString("Nick: %1").arg(QString::fromUtf8(meta->authorNick.c_str()));
+        if (!meta->title.empty()) lines << QString("Title: %1").arg(QString::fromUtf8(meta->title.c_str()));
         if (!meta->description.empty()) {
-            QString desc = QString::fromStdString(meta->description);
+            QString desc = QString::fromUtf8(meta->description.c_str());
             if (desc.length() > 200) desc = desc.left(200) + "...";
             lines << desc;
         }
@@ -278,10 +278,10 @@ void ImageViewerDialog::populateMetadataPanel() {
 
     QStringList dateLines;
     if (info) {
-        if (!info->downloadTime.empty()) dateLines << QString("Download: %1").arg(QString::fromStdString(info->downloadTime));
-        if (!info->editTime.empty()) dateLines << QString("Modified: %1").arg(QString::fromStdString(info->editTime));
+        if (!info->downloadTime.empty()) dateLines << QString("Download: %1").arg(QString::fromUtf8(info->downloadTime.c_str()));
+        if (!info->editTime.empty()) dateLines << QString("Modified: %1").arg(QString::fromUtf8(info->editTime.c_str()));
     }
-    if (meta && !meta->date.empty()) dateLines << QString("Published: %1").arg(QString::fromStdString(meta->date));
+    if (meta && !meta->date.empty()) dateLines << QString("Published: %1").arg(QString::fromUtf8(meta->date.c_str()));
     datesLabel->setText(dateLines.empty() ? "No date info" : dateLines.join("\n"));
 }
 

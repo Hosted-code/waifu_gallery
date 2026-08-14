@@ -199,12 +199,12 @@ void MainWindow::connectSignalSlots() {
     // image viewer
 }QString getTagString(const TagCount& tagCount) {
     if (tagCount.fileCount > 0 && tagCount.count != tagCount.fileCount) {
-        return QString("%1 (%2/%3)").arg(QString::fromStdString(tagCount.tag.tag)).arg(tagCount.count).arg(tagCount.fileCount);
+        return QString("%1 (%2/%3)").arg(QString::fromUtf8(tagCount.tag.tag.c_str())).arg(tagCount.count).arg(tagCount.fileCount);
     }
-    return QString("%1 (%2)").arg(QString::fromStdString(tagCount.tag.tag)).arg(tagCount.count);
+    return QString("%1 (%2)").arg(QString::fromUtf8(tagCount.tag.tag.c_str())).arg(tagCount.count);
 }
 QString getTagString(const PlatformTagCount& tagCount) {
-    QString base = QString("[%1] %2").arg(platformTypeToString(tagCount.tag.platform)).arg(QString::fromStdString(tagCount.tag.tag));
+    QString base = QString("[%1] %2").arg(platformTypeToString(tagCount.tag.platform)).arg(QString::fromUtf8(tagCount.tag.tag.c_str()));
     if (tagCount.fileCount > 0 && tagCount.count != tagCount.fileCount) {
         return QString("%1 (%2/%3)").arg(base).arg(tagCount.count).arg(tagCount.fileCount);
     }
@@ -249,11 +249,11 @@ void MainWindow::displayTags(const std::vector<TagCount>& availableTags,
     ui->characterTagList->addItems(characterTagNames);
     for (int i = 0; i < generalTagNames.size(); i++) {
         ui->generalTagList->item(i)->setData(Qt::UserRole, tagCounts[generalTagIndices[i]].tagId);
-        ui->generalTagList->item(i)->setData(Qt::UserRole + 1, QString::fromStdString(tagCounts[generalTagIndices[i]].tag.tag));
+        ui->generalTagList->item(i)->setData(Qt::UserRole + 1, QString::fromUtf8(tagCounts[generalTagIndices[i]].tag.tag.c_str()));
     }
     for (int i = 0; i < characterTagNames.size(); i++) {
         ui->characterTagList->item(i)->setData(Qt::UserRole, tagCounts[characterTagIndices[i]].tagId);
-        ui->characterTagList->item(i)->setData(Qt::UserRole + 1, QString::fromStdString(tagCounts[characterTagIndices[i]].tag.tag));
+        ui->characterTagList->item(i)->setData(Qt::UserRole + 1, QString::fromUtf8(tagCounts[characterTagIndices[i]].tag.tag.c_str()));
     }
 
     auto pixivClassifications = database.getAllPlatformTagClassifications(PlatformType::Pixiv);
@@ -270,7 +270,7 @@ void MainWindow::displayTags(const std::vector<TagCount>& availableTags,
         auto it = pixivClassifications.find(tagCount.tag.tag);
         if (it == pixivClassifications.end()) {
             ui->platformTagList->item(platformTagIndex)->setData(Qt::UserRole, tagCount.tagId);
-            ui->platformTagList->item(platformTagIndex)->setData(Qt::UserRole + 1, QString::fromStdString(tagCount.tag.tag));
+            ui->platformTagList->item(platformTagIndex)->setData(Qt::UserRole + 1, QString::fromUtf8(tagCount.tag.tag.c_str()));
             platformTagIndex++;
         }
     }
@@ -870,7 +870,7 @@ void MainWindow::handleImportPowerfulPixivDownloaderAction() {
                 if (!result.errors.empty()) {
                     QString errorMsg;
                     for (const auto& err : result.errors) {
-                        errorMsg += QString::fromStdString(err) + "\n";
+                        errorMsg += QString::fromUtf8(err.c_str()) + "\n";
                     }
                     QMessageBox::warning(this, tr("导入失败"), tr("生成元数据时出错：\n\n%1\n请重新选择或忽略只导入图片。").arg(errorMsg));
                     reply = QMessageBox::question(
@@ -956,7 +956,7 @@ void MainWindow::handleShowSettingsAction() {
             if (!result.errors.empty()) {
                 QString errorMsg;
                 for (const auto& err : result.errors) {
-                    errorMsg += QString::fromStdString(err) + "\n";
+                    errorMsg += QString::fromUtf8(err.c_str()) + "\n";
                 }
                 QMessageBox::warning(this, tr("导入标签失败"), tr("生成元数据时出错：\n\n%1").arg(errorMsg));
             } else if (result.matched == 0) {

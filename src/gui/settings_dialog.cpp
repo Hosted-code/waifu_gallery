@@ -73,13 +73,13 @@ void SettingsDialog::loadSettings() {
     autoTagAfterImport = Settings::autoTagAfterImport;
     ui->autoTagAfterImportCheckBox->setChecked(autoTagAfterImport);
     autoTaggerDLLPath = Settings::autoTaggerDLLPath;
-    ui->autoTaggerDLLPathLineEdit->setText(QString::fromStdString(autoTaggerDLLPath.string()));
+    ui->autoTaggerDLLPathLineEdit->setText(QString::fromUtf8(autoTaggerDLLPath.string().c_str()));
 
     picDirectories = Settings::picDirectories;
     ui->picDirsTable->clear();
     ui->picDirsTable->setRowCount(static_cast<int>(picDirectories.size()));
     for (int i = 0; i < picDirectories.size(); i++) {
-        ui->picDirsTable->setItem(i, 0, createDirItem(QString::fromStdString(picDirectories[i].first.string())));
+        ui->picDirsTable->setItem(i, 0, createDirItem(QString::fromUtf8(picDirectories[i].first.string().c_str())));
         ui->picDirsTable->setCellWidget(i, 1, createParserComboBox(picDirectories[i].second));
         auto* importTagsBtn = new QPushButton(tr("导入标签"));
         importTagsBtn->setProperty("row", i);

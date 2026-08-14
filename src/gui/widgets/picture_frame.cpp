@@ -104,29 +104,29 @@ void PictureFrame::showInfo(SearchField searchField) const {
     if (metadataItem) { // display metadata if available, otherwise show filename and disable links
         switch (metadataItem->metadata.platformType) {
         case PlatformType::Pixiv:
-            ui->titleLabel->setText(QString::fromStdString(metadataItem->metadata.title));
-            ui->illustratorLabel->setText(QString::fromStdString(metadataItem->metadata.authorName));
+            ui->titleLabel->setText(QString::fromUtf8(metadataItem->metadata.title.c_str()));
+            ui->illustratorLabel->setText(QString::fromUtf8(metadataItem->metadata.authorName.c_str()));
             ui->idLabel->setText(QString("pid: %1").arg(QString::number(metadataItem->metadata.id)));
             break;
         case PlatformType::Twitter: {
-            QString description = QString::fromStdString(metadataItem->metadata.description).split('\n').first();
+            QString description = QString::fromUtf8(metadataItem->metadata.description.c_str()).split('\n').first();
             if (description.length() > MAX_TITLE_LENGTH) {
                 description = description.left(MAX_TITLE_LENGTH) + "...";
             }
             ui->titleLabel->setText(description);
-            ui->illustratorLabel->setText(QString::fromStdString(metadataItem->metadata.authorNick));
-            ui->idLabel->setText(QString("@%1").arg(QString::fromStdString(metadataItem->metadata.authorName)));
+            ui->illustratorLabel->setText(QString::fromUtf8(metadataItem->metadata.authorNick.c_str()));
+            ui->idLabel->setText(QString("@%1").arg(QString::fromUtf8(metadataItem->metadata.authorName.c_str())));
             break;
         }
         default:
-            ui->titleLabel->setText(QString::fromStdString(metadataItem->metadata.title));
+            ui->titleLabel->setText(QString::fromUtf8(metadataItem->metadata.title.c_str()));
             ui->idLabel->setText(QString::number(metadataItem->metadata.id));
             ui->illustratorLabel->setResponsive(false);
             ui->idLabel->setResponsive(false);
             break;
         }
     } else { // no metadata, show filename and disable links
-        QString filename = QString::fromStdString(picItem->info.filePaths.begin()->filename().string());
+        QString filename = QString::fromUtf8(picItem->info.filePaths.begin()->filename().string().c_str());
         if (filename.length() > MAX_TITLE_LENGTH) {
             filename = filename.left(MAX_TITLE_LENGTH) + "...";
         }
@@ -288,7 +288,7 @@ void PictureFrame::openFileWithDefaultApp() const {
     if (released || !picItem) return;
     for (const auto& path : picItem->info.filePaths) {
         try {
-            QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(path.string())));
+            QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromUtf8(path.string().c_str())));
             break;
         } catch (...) {
             continue;
@@ -324,17 +324,17 @@ void PictureFrame::openIllustratorUrl() const {
     if (released || !metadataItem) return;
     if (metadataItem->metadata.platformType == PlatformType::Pixiv) {
         QDesktopServices::openUrl(
-            QUrl(QString::fromStdString(PIXIV_AUTHOR_URL + std::to_string(metadataItem->metadata.authorID))));
+            QUrl(QString::fromUtf8((PIXIV_AUTHOR_URL + std::to_string(metadataItem->metadata.authorID)).c_str())));
     } else if (metadataItem->metadata.platformType == PlatformType::Twitter) {
         QDesktopServices::openUrl(
-            QUrl(QString::fromStdString(TWITTER_AUTHOR_URL + std::to_string(metadataItem->metadata.authorID))));
+            QUrl(QString::fromUtf8((TWITTER_AUTHOR_URL + std::to_string(metadataItem->metadata.authorID)).c_str())));
     }
 }
 void PictureFrame::openIdUrl() const {
     if (released || !metadataItem) return;
     if (metadataItem->metadata.platformType == PlatformType::Pixiv) {
-        QDesktopServices::openUrl(QUrl(QString::fromStdString(PIXIV_BASE_URL + std::to_string(metadataItem->metadata.id))));
+        QDesktopServices::openUrl(QUrl(QString::fromUtf8((PIXIV_BASE_URL + std::to_string(metadataItem->metadata.id)).c_str())));
     } else if (metadataItem->metadata.platformType == PlatformType::Twitter) {
-        QDesktopServices::openUrl(QUrl(QString::fromStdString(TWITTER_BASE_URL + std::to_string(metadataItem->metadata.id))));
+        QDesktopServices::openUrl(QUrl(QString::fromUtf8((TWITTER_BASE_URL + std::to_string(metadataItem->metadata.id)).c_str())));
     }
 }

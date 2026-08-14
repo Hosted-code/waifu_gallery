@@ -204,10 +204,6 @@ std::vector<TagDisplay> ImageViewerController::currentTagDisplays() const {
 void ImageViewerController::addTag(const std::string& tagName) {
     if (!database || !currentPicInfo()) return;
 
-    Info() << "addTag called with tagName:" << tagName << "hex:";
-    for (unsigned char c : tagName) Info() << std::hex << (int)c;
-    Info() << std::dec;
-
     auto currentTags = currentTagDisplays();
     for (const auto& td : currentTags) {
         if (td.name == tagName) return;
@@ -235,29 +231,45 @@ void ImageViewerController::addTag(const std::string& tagName) {
 void ImageViewerController::removeTag(uint32_t tagId) {
     if (!database || !currentPicInfo()) return;
 
-    uint64_t picId = currentPicInfo()->id;
-    if (database->removeTagFromPicture(picId, tagId)) {
-        auto& cache = DbCache::getInstance();
+    auto& cache = DbCache::getInstance();
+    std::string tagName;
+
+    if (database->isAITag(tagId)) {
+        uint64_t picId = currentPicInfo()->id;
+        if (!database->removeTagFromPicture(picId, tagId)) return;
         TagStr tagStr = cache.getStringTag(tagId);
+        tagName = tagStr.tag;
         PicInfo* mutableInfo = const_cast<PicInfo*>(currentPicInfo());
         auto& tags = mutableInfo->tags;
         tags.erase(std::remove_if(tags.begin(), tags.end(),
             [tagId](const PicTag& t) { return t.tagId == tagId; }), tags.end());
-        if (!tagStr.tag.empty()) {
-            database->syncMetadataFile(*currentPicInfo(), currentMetadata(), tagStr.tag, false);
-        }
-        emit tagsChanged();
+    } else if (database->isPlatformTag(tagId)) {
+        const Metadata* meta = currentMetadata();
+        if (!meta) return;
+        PlatformTagStr ptStr = cache.getPlatformStringTag(tagId);
+        tagName = ptStr.tag;
+        if (!database->removePlatformTagFromMetadata(meta->platformType, meta->id, tagId)) return;
+        Metadata* mutableMeta = const_cast<Metadata*>(meta);
+        auto& tagIds = mutableMeta->tagIds;
+        tagIds.erase(std::remove(tagIds.begin(), tagIds.end(), tagId), tagIds.end());
+    } else {
+        return;
     }
+
+    if (!tagName.empty()) {
+        database->syncMetadataFile(*currentPicInfo(), currentMetadata(), tagName, false);
+    }
+    emit tagsChanged();
 }
 
 std::vector<std::string> ImageViewerController::getTagSuggestions(const std::string& prefix) const {
     std::vector<std::string> result;
     if (!database || prefix.empty()) return result;
 
-    QString qPrefix = QString::fromStdString(prefix);
+    QString qPrefix = QString::fromUtf8(prefix.c_str());
     const auto& allTags = database->getAllAITags();
     for (const auto& tag : allTags) {
-        if (QString::fromStdString(tag.tag).startsWith(qPrefix, Qt::CaseInsensitive)) {
+        if (QString::fromUtf8(tag.tag.c_str()).startsWith(qPrefix, Qt::CaseInsensitive)) {
             result.push_back(tag.tag);
         }
     }

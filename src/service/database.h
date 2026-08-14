@@ -278,7 +278,10 @@ public:
     // manual tag management
     bool addTagToPicture(uint64_t picId, uint32_t tagId, float probability = 1.0f) const;
     bool removeTagFromPicture(uint64_t picId, uint32_t tagId) const;
+    bool removePlatformTagFromMetadata(PlatformType platform, int64_t platformId, uint32_t tagId) const;
     uint32_t addAITag(const std::string& tagName, bool isCharacter = false) const;
+    bool isAITag(uint32_t tagId) const;
+    bool isPlatformTag(uint32_t tagId) const;
     const std::vector<TagStr>& getAllAITags() const { return cache.getTags(); }
     void syncMetadataFile(const PicInfo& picInfo, const Metadata* meta, const std::string& tagName, bool adding) const;
 

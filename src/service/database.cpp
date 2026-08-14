@@ -1580,6 +1580,35 @@ bool PicDatabase::removeTagFromPicture(uint64_t picId, uint32_t tagId) const {
     return true;
 }
 
+bool PicDatabase::removePlatformTagFromMetadata(PlatformType platform, int64_t platformId, uint32_t tagId) const {
+    SQLiteStatement stmt = prepare(R"(
+        DELETE FROM picture_metadata_tags WHERE platform = ? AND platform_id = ? AND tag_id = ?
+    )");
+    sqlite3_bind_int(stmt.get(), 1, static_cast<int>(platform));
+    sqlite3_bind_int64(stmt.get(), 2, platformId);
+    sqlite3_bind_int(stmt.get(), 3, static_cast<int>(tagId));
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        Error() << "Failed to remove platform tag from metadata: " << sqlite3_errmsg(db);
+        return false;
+    }
+    if (sqlite3_changes(db) > 0) {
+        SQLiteStatement updateCount = prepare(R"(
+            UPDATE platform_tags SET count = MAX(count - 1, 0) WHERE tag_id = ?
+        )");
+        sqlite3_bind_int(updateCount.get(), 1, static_cast<int>(tagId));
+        sqlite3_step(updateCount.get());
+    }
+    return true;
+}
+
+bool PicDatabase::isAITag(uint32_t tagId) const {
+    return cache.getStringTag(tagId).tag.empty() ? false : true;
+}
+
+bool PicDatabase::isPlatformTag(uint32_t tagId) const {
+    return cache.getPlatformStringTag(tagId).tag.empty() ? false : true;
+}
+
 uint32_t PicDatabase::addAITag(const std::string& tagName, bool isCharacter) const {
     auto existingId = getAITagIdByTagText(tagName);
     if (existingId.has_value()) return existingId.value();
