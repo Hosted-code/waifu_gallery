@@ -11,16 +11,16 @@
 class TagPill : public QWidget {
     Q_OBJECT
 public:
-    TagPill(const QString& text, uint32_t tagId, bool isPlatformTag, QWidget* parent = nullptr);
+    TagPill(const QString& text, uint32_t tagId, bool isCharacter, QWidget* parent = nullptr);
     uint32_t tagId() const { return m_tagId; }
-    bool isPlatformTag() const { return m_isPlatformTag; }
+    bool isCharacter() const { return m_isCharacter; }
 
 signals:
-    void removeRequested(uint32_t tagId, bool isPlatformTag);
+    void removeRequested(uint32_t tagId);
 
 private:
     uint32_t m_tagId;
-    bool m_isPlatformTag;
+    bool m_isCharacter;
 };
 
 class ImageViewerDialog : public QDialog {

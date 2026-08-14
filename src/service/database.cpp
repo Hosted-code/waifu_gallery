@@ -21,6 +21,8 @@
 #include "parser.h"
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 // utility functions
 
@@ -1595,4 +1597,83 @@ uint32_t PicDatabase::addAITag(const std::string& tagName, bool isCharacter) con
     cache.clearTagMapping();
     initTagMapping();
     return newId;
+}
+
+void PicDatabase::syncMetadataFile(const PicInfo& picInfo, const Metadata* meta, const std::string& tagName, bool adding) const {
+    if (picInfo.filePaths.empty()) return;
+
+    std::filesystem::path picDir = picInfo.filePaths[0].parent_path();
+
+    std::filesystem::path metaPath;
+    if (meta && meta->platformType == PlatformType::Pixiv) {
+        std::string prefix = std::to_string(meta->id) + "-";
+        for (const auto& entry : std::filesystem::directory_iterator(picDir)) {
+            if (!entry.is_regular_file()) continue;
+            std::string fname = entry.path().filename().string();
+            if (fname.find(prefix) == 0 && fname.find("-meta.json") != std::string::npos) {
+                metaPath = entry.path();
+                break;
+            }
+        }
+    } else if (meta && meta->platformType == PlatformType::Twitter) {
+        for (const auto& entry : std::filesystem::directory_iterator(picDir)) {
+            if (!entry.is_regular_file()) continue;
+            if (entry.path().extension() == ".json") {
+                std::string fname = entry.path().filename().string();
+                if (fname.find("-meta") == std::string::npos) {
+                    metaPath = entry.path();
+                    break;
+                }
+            }
+        }
+    }
+
+    if (metaPath.empty() || !std::filesystem::exists(metaPath)) {
+        Warn() << "syncMetadataFile: no meta.json found in" << picDir.string();
+        return;
+    }
+
+    try {
+        std::ifstream inFile(metaPath);
+        if (!inFile.is_open()) return;
+        nlohmann::json j = nlohmann::json::parse(inFile, nullptr, false);
+        inFile.close();
+        if (j.is_discarded()) return;
+
+        std::string tagKey;
+        if (meta && meta->platformType == PlatformType::Pixiv) {
+            tagKey = j.contains("tagsTranslOnly") ? "tagsTranslOnly" : "tags";
+        } else {
+            tagKey = "hashtags";
+        }
+
+        if (!j.contains(tagKey) || !j[tagKey].is_array()) {
+            j[tagKey] = nlohmann::json::array();
+        }
+
+        auto& tags = j[tagKey];
+        if (adding) {
+            bool exists = false;
+            for (const auto& t : tags) {
+                if (t.get<std::string>() == tagName) { exists = true; break; }
+            }
+            if (!exists) tags.push_back(tagName);
+        } else {
+            for (auto it = tags.begin(); it != tags.end(); ++it) {
+                if (it->get<std::string>() == tagName) {
+                    tags.erase(it);
+                    break;
+                }
+            }
+        }
+
+        std::ofstream outFile(metaPath);
+        if (outFile.is_open()) {
+            outFile << j.dump(2);
+            outFile.close();
+            Info() << "Synced metadata file:" << metaPath.string() << (adding ? " added" : " removed") << tagName;
+        }
+    } catch (const std::exception& e) {
+        Warn() << "Failed to sync metadata file:" << metaPath.string() << e.what();
+    }
 }

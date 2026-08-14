@@ -22,7 +22,6 @@ struct TagDisplay {
     uint32_t tagId = 0;
     std::string name;
     bool isCharacter = false;
-    bool isPlatformTag = false;
 };
 
 class ImageViewerController : public QObject {

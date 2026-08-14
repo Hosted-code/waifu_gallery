@@ -61,12 +61,11 @@ QString aiTypeStr(AIType a) {
 
 const QString PILL_STYLE_CHAR = "background: #3D1F3A; border: 1px solid #EC4899; border-radius: 3px; color: #EC4899;";
 const QString PILL_STYLE_ATTR = "background: #1A2E3D; border: 1px solid #38BDF8; border-radius: 3px; color: #38BDF8;";
-const QString PILL_STYLE_PLAT = "background: #2A1F3D; border: 1px solid #8B5CF6; border-radius: 3px; color: #8B5CF6;";
 
 } // namespace
 
-TagPill::TagPill(const QString& text, uint32_t tagId, bool isPlatformTag, QWidget* parent)
-    : QWidget(parent), m_tagId(tagId), m_isPlatformTag(isPlatformTag) {
+TagPill::TagPill(const QString& text, uint32_t tagId, bool isCharacter, QWidget* parent)
+    : QWidget(parent), m_tagId(tagId), m_isCharacter(isCharacter) {
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(4, 1, 1, 1);
     layout->setSpacing(2);
@@ -79,10 +78,10 @@ TagPill::TagPill(const QString& text, uint32_t tagId, bool isPlatformTag, QWidge
     removeBtn->setFixedSize(14, 14);
     removeBtn->setStyleSheet("QPushButton { border: none; background: transparent; color: #666; font-size: 10px; }"
                              "QPushButton:hover { color: #F87171; }");
-    connect(removeBtn, &QPushButton::clicked, this, [this]() { emit removeRequested(m_tagId, m_isPlatformTag); });
+    connect(removeBtn, &QPushButton::clicked, this, [this]() { emit removeRequested(m_tagId); });
     layout->addWidget(removeBtn);
 
-    setStyleSheet(isPlatformTag ? PILL_STYLE_PLAT : PILL_STYLE_ATTR);
+    setStyleSheet(isCharacter ? PILL_STYLE_CHAR : PILL_STYLE_ATTR);
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 }
 
@@ -176,6 +175,7 @@ void ImageViewerDialog::buildMetadataPanel() {
     tagCompleter->setCaseSensitivity(Qt::CaseInsensitive);
     tagCompleter->setCompletionMode(QCompleter::PopupCompletion);
     tagCompleter->setMaxVisibleItems(10);
+    tagCompleter->setModel(new QStringListModel(metadataPanel));
     tagInput->setCompleter(tagCompleter);
 
     auto* socialHeader = new QLabel("SOCIAL", metadataPanel);
@@ -211,12 +211,16 @@ void ImageViewerDialog::buildMetadataPanel() {
 
     connect(tagInput, &QLineEdit::returnPressed, this, &ImageViewerDialog::onTagInputReturnPressed);
     connect(tagInput, &QLineEdit::textChanged, this, [this](const QString& text) {
-        if (!controller || text.isEmpty()) return;
-        auto suggestions = controller->getTagSuggestions(text.toStdString());
-        QStringList model;
-        for (const auto& s : suggestions) model << QString::fromStdString(s);
-        tagCompleter->setModel(new QStringListModel(model, tagCompleter));
+        if (!controller || text.isEmpty()) {
+            static_cast<QStringListModel*>(tagCompleter->model())->setStringList({});
+            return;
+        }
+        auto suggestions = controller->getTagSuggestions(text.toUtf8().constData());
+        QStringList names;
+        for (const auto& s : suggestions) names << QString::fromUtf8(s.c_str());
+        static_cast<QStringListModel*>(tagCompleter->model())->setStringList(names);
         tagCompleter->setCompletionPrefix(text);
+        tagCompleter->complete();
     });
 }
 
@@ -298,10 +302,9 @@ void ImageViewerDialog::rebuildTagPills() {
         tagsLayout->addWidget(emptyLabel);
     } else {
         for (const auto& td : tagDisplays) {
-            auto* pill = new TagPill(QString::fromStdString(td.name), td.tagId, td.isPlatformTag, tagsContainer);
-            if (td.isCharacter) pill->setStyleSheet(PILL_STYLE_CHAR);
-            connect(pill, &TagPill::removeRequested, this, [this](uint32_t tagId, bool isPlatformTag) {
-                if (!isPlatformTag && controller) controller->removeTag(tagId);
+            auto* pill = new TagPill(QString::fromUtf8(td.name.c_str()), td.tagId, td.isCharacter, tagsContainer);
+            connect(pill, &TagPill::removeRequested, this, [this](uint32_t tagId) {
+                if (controller) controller->removeTag(tagId);
             });
             tagsLayout->addWidget(pill);
         }
@@ -313,7 +316,7 @@ void ImageViewerDialog::onTagInputReturnPressed() {
     QString text = tagInput->text().trimmed();
     if (text.isEmpty()) return;
 
-    controller->addTag(text.toStdString());
+    controller->addTag(text.toUtf8().constData());
     tagInput->clear();
 }
 

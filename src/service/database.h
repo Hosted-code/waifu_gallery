@@ -280,6 +280,7 @@ public:
     bool removeTagFromPicture(uint64_t picId, uint32_t tagId) const;
     uint32_t addAITag(const std::string& tagName, bool isCharacter = false) const;
     const std::vector<TagStr>& getAllAITags() const { return cache.getTags(); }
+    void syncMetadataFile(const PicInfo& picInfo, const Metadata* meta, const std::string& tagName, bool adding) const;
 
     void refreshTagMapping() const;
 
