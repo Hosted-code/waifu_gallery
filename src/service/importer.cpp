@@ -244,7 +244,7 @@ void Importer::insertThreadFunc() {
         return;
     }
     threadDb.syncMetadataAndPicTables();
-    threadDb.updatePlatformTagCounts();
+    threadDb.updateTagCounts();
     for (const auto& filePath : files) {
         threadDb.addImportedFile(filePath);
     }

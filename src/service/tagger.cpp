@@ -170,9 +170,19 @@ void Tagger::analyzeThreadFunc() {
     readyCv.notify_all();
     analyzed = 0;
 
+    auto tagSet = tagger->getTagSet();
+    auto& cache = DbCache::getInstance();
+    std::vector<uint32_t> modelIndexToTagId(tagSet.size(), 0);
+    for (size_t i = 0; i < tagSet.size(); ++i) {
+        const auto& [tagText, isCharacter] = tagSet[i];
+        uint32_t id = cache.getTagId(tagText);
+        if (id != 0) {
+            modelIndexToTagId[i] = id;
+        }
+    }
+
     threadDb.beginTransaction();
     while (analyzed < totalSupported.load() && !stopFlag.load()) {
-        // fetch preprocessed data
         std::pair<uint64_t, std::vector<float>> item;
         {
             std::unique_lock<std::mutex> lock(preprocessedMutex);
@@ -183,17 +193,32 @@ void Tagger::analyzeThreadFunc() {
         }
         preprocessedCv.notify_one();
 
-        // analyze
         uint64_t picID = item.first;
         std::vector<float>& imageData = item.second;
 
         PredictResult predictResult = tagger->predict(imageData);
         ImageTagResult tagResult = tagger->postprocess(predictResult);
 
-        // update database
         std::vector<PicTag> picTags;
         for (size_t i = 0; i < tagResult.tagIndexes.size(); ++i) {
-            picTags.emplace_back(PicTag{static_cast<uint32_t>(tagResult.tagIndexes[i]), tagResult.tagProbabilities[i]});
+            int modelIdx = tagResult.tagIndexes[i];
+            uint32_t tagId = 0;
+            if (modelIdx >= 0 && modelIdx < (int)modelIndexToTagId.size()) {
+                tagId = modelIndexToTagId[modelIdx];
+            }
+            if (tagId == 0 && modelIdx >= 0 && modelIdx < (int)tagSet.size()) {
+                const std::string& tagText = tagSet[modelIdx].first;
+                auto existingId = threadDb.getTagIdByTagText(tagText);
+                if (existingId.has_value()) {
+                    tagId = existingId.value();
+                    if (modelIdx < (int)modelIndexToTagId.size()) {
+                        modelIndexToTagId[modelIdx] = tagId;
+                    }
+                }
+            }
+            if (tagId != 0) {
+                picTags.emplace_back(PicTag{tagId, tagResult.tagProbabilities[i]});
+            }
         }
         auto restrictType = static_cast<RestrictType>(static_cast<int>(tagResult.restrictType));
         threadDb.updatePicTags(picID, picTags, restrictType, predictResult.featureHash);
@@ -224,6 +249,5 @@ void Tagger::analyzeThreadFunc() {
     }
 
     Info() << "Tagging process completed.";
-    // progress equals total means finished
     if (progressCallBack) progressCallBack(analyzed, totalSupported.load());
 }
