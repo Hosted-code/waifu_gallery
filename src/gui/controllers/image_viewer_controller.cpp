@@ -169,32 +169,16 @@ std::vector<TagDisplay> ImageViewerController::currentTagDisplays() const {
 
     auto& cache = DbCache::getInstance();
 
-    // AI tags from PicInfo::tags
     result.reserve(info->tags.size());
     for (const PicTag& picTag : info->tags) {
         TagStr tagStr = cache.getStringTag(picTag.tagId);
         if (!tagStr.tag.empty()) {
-            result.push_back(TagDisplay{picTag.tagId, tagStr.tag, tagStr.isCharacter});
-        }
-    }
-
-    // Platform tags from Metadata::tagIds
-    const Metadata* meta = currentMetadata();
-    if (meta) {
-        for (uint32_t tagId : meta->tagIds) {
-            PlatformTagStr ptStr = cache.getPlatformStringTag(tagId);
-            if (!ptStr.tag.empty()) {
-                auto it = std::find_if(result.begin(), result.end(),
-                    [&](const TagDisplay& td) { return td.name == ptStr.tag; });
-                if (it == result.end()) {
-                    result.push_back(TagDisplay{tagId, ptStr.tag, false});
-                }
-            }
+            result.push_back(TagDisplay{picTag.tagId, tagStr.tag, tagStr.category, tagStr.platform});
         }
     }
 
     std::sort(result.begin(), result.end(), [](const TagDisplay& a, const TagDisplay& b) {
-        if (a.isCharacter != b.isCharacter) return a.isCharacter;
+        if (a.category != b.category) return a.category < b.category;
         return a.name < b.name;
     });
 
@@ -210,11 +194,11 @@ void ImageViewerController::addTag(const std::string& tagName) {
     }
 
     uint32_t tagId;
-    auto existingId = database->getAITagIdByTagText(tagName);
+    auto existingId = database->getTagIdByTagText(tagName);
     if (existingId.has_value()) {
         tagId = existingId.value();
     } else {
-        tagId = database->addAITag(tagName, false);
+        tagId = database->addTag(tagName, TagCategory::Attribute);
         if (tagId == 0) return;
     }
 
@@ -232,29 +216,15 @@ void ImageViewerController::removeTag(uint32_t tagId) {
     if (!database || !currentPicInfo()) return;
 
     auto& cache = DbCache::getInstance();
-    std::string tagName;
+    uint64_t picId = currentPicInfo()->id;
+    if (!database->removeTagFromPicture(picId, tagId)) return;
 
-    if (database->isAITag(tagId)) {
-        uint64_t picId = currentPicInfo()->id;
-        if (!database->removeTagFromPicture(picId, tagId)) return;
-        TagStr tagStr = cache.getStringTag(tagId);
-        tagName = tagStr.tag;
-        PicInfo* mutableInfo = const_cast<PicInfo*>(currentPicInfo());
-        auto& tags = mutableInfo->tags;
-        tags.erase(std::remove_if(tags.begin(), tags.end(),
-            [tagId](const PicTag& t) { return t.tagId == tagId; }), tags.end());
-    } else if (database->isPlatformTag(tagId)) {
-        const Metadata* meta = currentMetadata();
-        if (!meta) return;
-        PlatformTagStr ptStr = cache.getPlatformStringTag(tagId);
-        tagName = ptStr.tag;
-        if (!database->removePlatformTagFromMetadata(meta->platformType, meta->id, tagId)) return;
-        Metadata* mutableMeta = const_cast<Metadata*>(meta);
-        auto& tagIds = mutableMeta->tagIds;
-        tagIds.erase(std::remove(tagIds.begin(), tagIds.end(), tagId), tagIds.end());
-    } else {
-        return;
-    }
+    TagStr tagStr = cache.getStringTag(tagId);
+    std::string tagName = tagStr.tag;
+    PicInfo* mutableInfo = const_cast<PicInfo*>(currentPicInfo());
+    auto& tags = mutableInfo->tags;
+    tags.erase(std::remove_if(tags.begin(), tags.end(),
+        [tagId](const PicTag& t) { return t.tagId == tagId; }), tags.end());
 
     if (!tagName.empty()) {
         database->syncMetadataFile(*currentPicInfo(), currentMetadata(), tagName, false);
@@ -267,7 +237,7 @@ std::vector<std::string> ImageViewerController::getTagSuggestions(const std::str
     if (!database || prefix.empty()) return result;
 
     QString qPrefix = QString::fromUtf8(prefix.c_str());
-    const auto& allTags = database->getAllAITags();
+    const auto& allTags = database->getAllTags();
     for (const auto& tag : allTags) {
         if (QString::fromUtf8(tag.tag.c_str()).startsWith(qPrefix, Qt::CaseInsensitive)) {
             result.push_back(tag.tag);
@@ -275,6 +245,8 @@ std::vector<std::string> ImageViewerController::getTagSuggestions(const std::str
     }
 
     std::sort(result.begin(), result.end());
+    auto last = std::unique(result.begin(), result.end());
+    result.erase(last, result.end());
     if (result.size() > 20) result.resize(20);
     return result;
 }

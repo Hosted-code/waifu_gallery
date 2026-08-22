@@ -21,7 +21,8 @@ struct ViewerTransform {
 struct TagDisplay {
     uint32_t tagId = 0;
     std::string name;
-    bool isCharacter = false;
+    int category = 0;
+    int source = 0;
 };
 
 class ImageViewerController : public QObject {
