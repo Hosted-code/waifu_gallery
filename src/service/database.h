@@ -77,26 +77,24 @@ public:
         return instance;
     }
     bool tagMappingLoaded() const {
-        return !platformTagById.empty() || !tagById.empty();
+        return !tagById.empty();
     }
     bool featureHashCacheLoaded() const { return !picFeatureHashes.empty(); }
     bool importedFileLoaded() const { return !importedFiles.empty(); }
 
     const std::vector<TagStr>& getTags() const { return tags; }
+    uint32_t getTagId(const std::string& tagText) const {
+        auto it = tagToId.find(tagText);
+        return it != tagToId.end() ? it->second : 0;
+    }
 
     void loadTagMapping(std::unordered_map<std::string, uint32_t>&& tagToIdMap,
-                        std::unordered_map<PlatformTagStr, uint32_t>&& platformTagToIdMap,
                         std::vector<TagStr>&& tagList,
-                        std::vector<PlatformTagStr>&& platformTagList,
-                        std::unordered_map<uint32_t, TagStr>&& tagByIdMap,
-                        std::unordered_map<uint32_t, PlatformTagStr>&& platformTagByIdMap) {
+                        std::unordered_map<uint32_t, TagStr>&& tagByIdMap) {
         std::lock_guard<std::mutex> lock(writeMutex);
         tagToId = tagToIdMap;
-        platformTagToId = platformTagToIdMap;
         tags = tagList;
-        platformTags = platformTagList;
         tagById = tagByIdMap;
-        platformTagById = platformTagByIdMap;
     }
     void loadPicFeatureHashes(std::vector<std::pair<uint64_t, std::array<uint8_t, 64>>>&& featureHashes) {
         std::lock_guard<std::mutex> lock(writeMutex);
@@ -114,12 +112,18 @@ public:
         }
         return TagStr{};
     }
-    PlatformTagStr getPlatformStringTag(uint32_t tagId) const {
-        auto it = platformTagById.find(tagId);
-        if (it != platformTagById.end()) {
-            return it->second;
+    void updateTagCategory(uint32_t tagId, int category) {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        auto it = tagById.find(tagId);
+        if (it != tagById.end()) {
+            it->second.category = category;
+            for (auto& tag : tags) {
+                if (tag.tag == it->second.tag) {
+                    tag.category = category;
+                    break;
+                }
+            }
         }
-        return PlatformTagStr{};
     }
     bool isFileImported(const std::filesystem::path& filePath) const {
         std::string dir = filePath.parent_path().string();
@@ -143,36 +147,34 @@ public:
         importedFiles[dir].insert(filename);
     }
 
-    bool platformTagExists(const PlatformTagStr& tag) const { return platformTagToId.find(tag) != platformTagToId.end(); }
-    uint32_t addPlatformTag(const PlatformTagStr& tag) {
-        if (platformTagToId.find(tag) != platformTagToId.end()) {
-            return platformTagToId.at(tag);
+    bool tagExists(const std::string& tagText) const { return tagToId.find(tagText) != tagToId.end(); }
+    uint32_t addTagToCache(const std::string& tagText, int platform, int category) {
+        if (tagToId.find(tagText) != tagToId.end()) {
+            return tagToId.at(tagText);
         }
         std::lock_guard<std::mutex> lock(writeMutex);
-        platformTags.emplace_back(tag);
         uint32_t maxId = 0;
-        for (const auto& [id, _] : platformTagById) { if (id > maxId) maxId = id; }
+        for (const auto& [id, _] : tagById) { if (id > maxId) maxId = id; }
         uint32_t newId = maxId + 1;
-        platformTagToId[tag] = newId;
-        platformTagById[newId] = tag;
+        tagToId[tagText] = newId;
+        TagStr newTag{tagText, platform, category, ""};
+        tagById[newId] = newTag;
+        tags.emplace_back(newTag);
         return newId;
     }
-    void addPlatformTagWithId(const PlatformTagStr& tag, uint32_t id) {
+    void addTagToCacheWithId(const std::string& tagText, uint32_t id, int platform, int category) {
         std::lock_guard<std::mutex> lock(writeMutex);
-        platformTags.emplace_back(tag);
-        platformTagToId[tag] = id;
-        platformTagById[id] = tag;
+        tagToId[tagText] = id;
+        TagStr newTag{tagText, platform, category, ""};
+        tagById[id] = newTag;
+        tags.emplace_back(newTag);
     }
-    uint32_t getPlatformTagId(const PlatformTagStr& tag) const { return platformTagToId.at(tag); }
 
     void clearTagMapping() {
         std::lock_guard<std::mutex> lock(writeMutex);
         tagToId.clear();
-        platformTagToId.clear();
         tags.clear();
-        platformTags.clear();
         tagById.clear();
-        platformTagById.clear();
     }
 
 private:
@@ -186,12 +188,9 @@ private:
     std::mutex writeMutex;
 
     // in-memory tag mapping
-    std::unordered_map<std::string, uint32_t> tagToId;
-    std::unordered_map<PlatformTagStr, uint32_t> platformTagToId;
+    std::unordered_map<std::string, uint32_t> tagToId;  // tag text → tag_id (unified)
     std::vector<TagStr> tags;
-    std::vector<PlatformTagStr> platformTags;
     std::unordered_map<uint32_t, TagStr> tagById;
-    std::unordered_map<uint32_t, PlatformTagStr> platformTagById;
 
     // feature hash cache for similarity search
     std::vector<std::pair<uint64_t, std::array<uint8_t, 64>>> picFeatureHashes; // (picID, featureHash)
@@ -260,9 +259,10 @@ public:
     Metadata getMetadata(const PlatformID& platformID) const { return getMetadata(platformID.platform, platformID.platformID); }
 
     std::vector<TagCount> getTagCounts() const; // for gui tag selection panel display
-    std::vector<PlatformTagCount> getPlatformTagCounts() const;
     TagStr getStringTag(uint32_t tagId) const { return cache.getStringTag(tagId); }
-    PlatformTagStr getPlatformStringTag(uint32_t tagId) const { return cache.getPlatformStringTag(tagId); }
+    
+    // tag source and category management
+    bool setTagCategory(uint32_t tagId, TagCategory category) const;
     
     // platform tag classification
     bool classifyPlatformTag(PlatformType platform, const std::string& tag, bool isCharacter) const;
@@ -270,19 +270,16 @@ public:
     std::optional<bool> getPlatformTagClassification(PlatformType platform, const std::string& tag) const;
     std::unordered_map<std::string, bool> getAllPlatformTagClassifications(PlatformType platform) const;
     void syncClassifiedPlatformTagsToPictureTags() const;
-    std::optional<uint32_t> getAITagIdByTagText(const std::string& tagText) const;
-    bool deleteAITag(uint32_t tagId) const;
-    bool deleteAITag(const std::string& tagText) const;
+    std::optional<uint32_t> getTagIdByTagText(const std::string& tagText) const;
+    bool deleteTag(uint32_t tagId) const;
+    bool deleteTag(const std::string& tagText) const;
     std::optional<PlatformType> getPlatformTypeByTagText(const std::string& tagText) const;
 
     // manual tag management
     bool addTagToPicture(uint64_t picId, uint32_t tagId, float probability = 1.0f) const;
     bool removeTagFromPicture(uint64_t picId, uint32_t tagId) const;
-    bool removePlatformTagFromMetadata(PlatformType platform, int64_t platformId, uint32_t tagId) const;
-    uint32_t addAITag(const std::string& tagName, bool isCharacter = false) const;
-    bool isAITag(uint32_t tagId) const;
-    bool isPlatformTag(uint32_t tagId) const;
-    const std::vector<TagStr>& getAllAITags() const { return cache.getTags(); }
+    uint32_t addTag(const std::string& tagName, TagCategory category = TagCategory::Attribute) const;
+    const std::vector<TagStr>& getAllTags() const { return cache.getTags(); }
     void syncMetadataFile(const PicInfo& picInfo, const Metadata* meta, const std::string& tagName, bool adding) const;
 
     void refreshTagMapping() const;
@@ -290,13 +287,11 @@ public:
     // insert functions
     bool insertPicture(const ParsedPicture& picInfo) const;
     bool insertMetadata(const ParsedMetadata& metadataInfo);
-    bool updateMetadata(const ParsedMetadata& metadataInfo) const;
+    bool updateMetadata(const ParsedMetadata& metadataInfo);
 
     // search functions
     std::unordered_set<uint64_t> tagSearch(const std::unordered_set<uint32_t>& includedTagIds,
                                            const std::unordered_set<uint32_t>& excludedTagIds) const;
-    std::unordered_set<PlatformID> platformTagSearch(const std::unordered_set<uint32_t>& includedTagIds,
-                                                     const std::unordered_set<uint32_t>& excludedTagIds) const;
     std::unordered_set<PlatformID>
     textSearch(const std::string& searchText, PlatformType platformType, SearchField searchField) const;
 
@@ -309,8 +304,7 @@ public:
     void syncMetadataAndPicTables(std::unordered_set<PlatformID> newMetadataIds = {}) const; // post-import operations
     bool isFileImported(const std::filesystem::path& filePath) const { return cache.isFileImported(filePath); }
     void addImportedFile(const std::filesystem::path& filePath) const;
-    void updatePlatformTagCounts() const; // update platform tag counts after bulk import
-    void updateTagCounts() const;         // update tag counts after bulk import
+    void updateTagCounts() const;
 
     // tagger functions
     std::string getModelName() const;
@@ -327,6 +321,7 @@ private:
     DbCache& cache = DbCache::getInstance();
 
     std::unordered_set<PlatformID> newMetadataIds; // for syncMetadataAndPicTables use
+    std::unordered_map<PlatformID, std::vector<uint32_t>> newMetadataTagIds; // deferred platform tag associations
 
     void initDatabase(const std::string& databaseFile);
     bool createTables() const;

@@ -27,6 +27,7 @@
 #include <vector>
 
 enum class PlatformType { Unknown, Pixiv, Twitter };
+enum class TagCategory { Uncategorized = 0, Character = 1, Attribute = 2, Work = 3, Artist = 4 };
 enum class RestrictType { // keep in sync with autotagger module
     Unknown,
     AllAges, // General
@@ -53,32 +54,17 @@ struct PlatformID {
 };
 struct TagStr {
     std::string tag;
-    bool isCharacter;
+    int platform = 0;     // origin: 0=manual/AI, 1=Pixiv, 2=Twitter (informational only)
+    int category = 0;
+    std::string translatedTag;
 };
-struct PlatformTagStr {
-    PlatformType platform;
-    std::string tag;
-};
-struct TagCount { // for gui tag selection panel display
+struct TagCount {
     TagStr tag;
     uint32_t tagId = 0;
     uint32_t count = 0;
     uint32_t fileCount = 0;
 };
-struct PlatformTagCount { // for gui tag selection panel display
-    PlatformTagStr tag;
-    uint32_t tagId = 0;
-    uint32_t count = 0;
-    uint32_t fileCount = 0;
-};
 namespace std {
-template <> struct hash<PlatformTagStr> {
-    std::size_t operator()(const PlatformTagStr& tag) const noexcept {
-        std::size_t platformHash = std::hash<int>()(static_cast<int>(tag.platform));
-        std::size_t stringHash = std::hash<std::string>()(tag.tag);
-        return platformHash ^ (stringHash << 1);
-    }
-};
 template <> struct hash<PlatformID> {
     std::size_t operator()(const PlatformID& id) const noexcept {
         std::size_t platformHash = std::hash<int>()(static_cast<int>(id.platform));
@@ -87,9 +73,6 @@ template <> struct hash<PlatformID> {
     }
 };
 } // namespace std
-inline bool operator==(const PlatformTagStr& lhs, const PlatformTagStr& rhs) {
-    return lhs.platform == rhs.platform && lhs.tag == rhs.tag;
-}
 inline bool operator==(const PlatformID& lhs, const PlatformID& rhs) {
     return lhs.platform == rhs.platform && lhs.platformID == rhs.platformID;
 }
