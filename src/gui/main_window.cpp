@@ -163,14 +163,18 @@ void MainWindow::connectSignalSlots() {
     connect(ui->generalTagList, &QListWidget::itemDoubleClicked, this, &MainWindow::addExcludedTags);
     connect(ui->characterTagList, &QListWidget::itemClicked, this, &MainWindow::handleListWidgetItemSingleClick);
     connect(ui->characterTagList, &QListWidget::itemDoubleClicked, this, &MainWindow::addExcludedTags);
-    connect(ui->platformTagList, &QListWidget::itemClicked, this, &MainWindow::handleListWidgetItemSingleClick);
+    connect(ui->workTagList, &QListWidget::itemClicked, this, &MainWindow::handleListWidgetItemSingleClick);
+    connect(ui->workTagList, &QListWidget::itemDoubleClicked, this, &MainWindow::addExcludedTags);
+    connect(ui->uncategorizedTagList, &QListWidget::itemClicked, this, &MainWindow::handleListWidgetItemSingleClick);
+    connect(ui->uncategorizedTagList, &QListWidget::itemDoubleClicked, this, &MainWindow::addExcludedTags);
     ui->generalTagList->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(ui->generalTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handleAITagContextMenu);
+    connect(ui->generalTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handleTagContextMenu);
     ui->characterTagList->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(ui->characterTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handleAITagContextMenu);
-    ui->platformTagList->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(ui->platformTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handlePlatformTagContextMenu);
-    connect(ui->platformTagList, &QListWidget::itemDoubleClicked, this, &MainWindow::addExcludedTags);
+    connect(ui->characterTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handleTagContextMenu);
+    ui->workTagList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->workTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handleTagContextMenu);
+    ui->uncategorizedTagList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->uncategorizedTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handleTagContextMenu);
     connect(&tagClickTimer, &QTimer::timeout, this, &MainWindow::addIncludedTags);
     connect(&tagSearchTimer, &QTimer::timeout, this, &MainWindow::picSearch);
 
@@ -198,81 +202,82 @@ void MainWindow::connectSignalSlots() {
 
     // image viewer
 }QString getTagString(const TagCount& tagCount) {
+    QString tagName = QString::fromUtf8(tagCount.tag.tag.c_str());
     if (tagCount.fileCount > 0 && tagCount.count != tagCount.fileCount) {
-        return QString("%1 (%2/%3)").arg(QString::fromUtf8(tagCount.tag.tag.c_str())).arg(tagCount.count).arg(tagCount.fileCount);
+        return QString("%1 (%2/%3)").arg(tagName).arg(tagCount.count).arg(tagCount.fileCount);
     }
-    return QString("%1 (%2)").arg(QString::fromUtf8(tagCount.tag.tag.c_str())).arg(tagCount.count);
-}
-QString getTagString(const PlatformTagCount& tagCount) {
-    QString base = QString("[%1] %2").arg(platformTypeToString(tagCount.tag.platform)).arg(QString::fromUtf8(tagCount.tag.tag.c_str()));
-    if (tagCount.fileCount > 0 && tagCount.count != tagCount.fileCount) {
-        return QString("%1 (%2/%3)").arg(base).arg(tagCount.count).arg(tagCount.fileCount);
-    }
-    return QString("%1 (%2)").arg(base).arg(tagCount.count);
+    return QString("%1 (%2)").arg(tagName).arg(tagCount.count);
 }
 void MainWindow::loadTags() {
     allTags = database.getTagCounts();
-    allPlatformTags = database.getPlatformTagCounts();
     Info() << "Loaded tags from database.";
 }
-void MainWindow::displayTags(const std::vector<TagCount>& availableTags,
-                             const std::vector<PlatformTagCount>& availablePlatformTags) {
-    ui->generalTagList->clear();
+void MainWindow::displayTags(const std::vector<TagCount>& availableTags) {
     ui->characterTagList->clear();
-    ui->platformTagList->clear();
+    ui->generalTagList->clear();
+    ui->workTagList->clear();
+    ui->uncategorizedTagList->clear();
 
     std::vector<TagCount> tagCounts;
-    std::vector<PlatformTagCount> platformTagCounts;
 
-    if (availableTags.empty() && availablePlatformTags.empty()) { // only display all tags if no available tags are provided
+    if (availableTags.empty()) {
         tagCounts = allTags;
-        platformTagCounts = allPlatformTags;
-    } else { // display available tags when either availableTags or availablePlatformTags is provided
+    } else {
         tagCounts = availableTags;
-        platformTagCounts = availablePlatformTags;
     }
 
-    QStringList generalTagNames;
-    QStringList characterTagNames;
-    QList<int> generalTagIndices;
-    QList<int> characterTagIndices;
+    QStringList characterTagNames, attributeTagNames, workTagNames, uncategorizedTagNames;
+    QList<int> characterTagIndices, attributeTagIndices, workTagIndices, uncategorizedTagIndices;
+
     for (int i = 0; i < (int)tagCounts.size(); i++) {
-        if (tagCounts[i].tag.isCharacter) {
+        auto cat = static_cast<TagCategory>(tagCounts[i].tag.category);
+        switch (cat) {
+        case TagCategory::Character:
             characterTagNames.append(getTagString(tagCounts[i]));
             characterTagIndices.append(i);
-        } else {
-            generalTagNames.append(getTagString(tagCounts[i]));
-            generalTagIndices.append(i);
+            break;
+        case TagCategory::Attribute:
+            attributeTagNames.append(getTagString(tagCounts[i]));
+            attributeTagIndices.append(i);
+            break;
+        case TagCategory::Work:
+        case TagCategory::Artist:
+            workTagNames.append(getTagString(tagCounts[i]));
+            workTagIndices.append(i);
+            break;
+        default:
+            uncategorizedTagNames.append(getTagString(tagCounts[i]));
+            uncategorizedTagIndices.append(i);
+            break;
         }
     }
-    ui->generalTagList->addItems(generalTagNames);
+
     ui->characterTagList->addItems(characterTagNames);
-    for (int i = 0; i < generalTagNames.size(); i++) {
-        ui->generalTagList->item(i)->setData(Qt::UserRole, tagCounts[generalTagIndices[i]].tagId);
-        ui->generalTagList->item(i)->setData(Qt::UserRole + 1, QString::fromUtf8(tagCounts[generalTagIndices[i]].tag.tag.c_str()));
-    }
     for (int i = 0; i < characterTagNames.size(); i++) {
         ui->characterTagList->item(i)->setData(Qt::UserRole, tagCounts[characterTagIndices[i]].tagId);
         ui->characterTagList->item(i)->setData(Qt::UserRole + 1, QString::fromUtf8(tagCounts[characterTagIndices[i]].tag.tag.c_str()));
+        ui->characterTagList->item(i)->setData(Qt::UserRole + 2, tagCounts[characterTagIndices[i]].tag.platform);
     }
 
-    auto pixivClassifications = database.getAllPlatformTagClassifications(PlatformType::Pixiv);
-    QStringList platformTagNames;
-    for (const auto& tagCount : platformTagCounts) {
-        auto it = pixivClassifications.find(tagCount.tag.tag);
-        if (it == pixivClassifications.end()) {
-            platformTagNames.append(getTagString(tagCount));
-        }
+    ui->generalTagList->addItems(attributeTagNames);
+    for (int i = 0; i < attributeTagNames.size(); i++) {
+        ui->generalTagList->item(i)->setData(Qt::UserRole, tagCounts[attributeTagIndices[i]].tagId);
+        ui->generalTagList->item(i)->setData(Qt::UserRole + 1, QString::fromUtf8(tagCounts[attributeTagIndices[i]].tag.tag.c_str()));
+        ui->generalTagList->item(i)->setData(Qt::UserRole + 2, tagCounts[attributeTagIndices[i]].tag.platform);
     }
-    ui->platformTagList->addItems(platformTagNames);
-    int platformTagIndex = 0;
-    for (const auto& tagCount : platformTagCounts) {
-        auto it = pixivClassifications.find(tagCount.tag.tag);
-        if (it == pixivClassifications.end()) {
-            ui->platformTagList->item(platformTagIndex)->setData(Qt::UserRole, tagCount.tagId);
-            ui->platformTagList->item(platformTagIndex)->setData(Qt::UserRole + 1, QString::fromUtf8(tagCount.tag.tag.c_str()));
-            platformTagIndex++;
-        }
+
+    ui->workTagList->addItems(workTagNames);
+    for (int i = 0; i < workTagNames.size(); i++) {
+        ui->workTagList->item(i)->setData(Qt::UserRole, tagCounts[workTagIndices[i]].tagId);
+        ui->workTagList->item(i)->setData(Qt::UserRole + 1, QString::fromUtf8(tagCounts[workTagIndices[i]].tag.tag.c_str()));
+        ui->workTagList->item(i)->setData(Qt::UserRole + 2, tagCounts[workTagIndices[i]].tag.platform);
+    }
+
+    ui->uncategorizedTagList->addItems(uncategorizedTagNames);
+    for (int i = 0; i < uncategorizedTagNames.size(); i++) {
+        ui->uncategorizedTagList->item(i)->setData(Qt::UserRole, tagCounts[uncategorizedTagIndices[i]].tagId);
+        ui->uncategorizedTagList->item(i)->setData(Qt::UserRole + 1, QString::fromUtf8(tagCounts[uncategorizedTagIndices[i]].tag.tag.c_str()));
+        ui->uncategorizedTagList->item(i)->setData(Qt::UserRole + 2, tagCounts[uncategorizedTagIndices[i]].tag.platform);
     }
 }
 void MainWindow::initTagger() {
@@ -527,7 +532,6 @@ void MainWindow::addIncludedTags() {
     QListWidgetItem* item = lastClickedTagItem;
     ui->selectedTagScrollArea->show();
 
-    QListWidget* listWidget = item->listWidget();
     uint32_t tagId = item->data(Qt::UserRole).toUInt();
 
     QPushButton* tagButton = new QPushButton(this);
@@ -535,18 +539,11 @@ void MainWindow::addIncludedTags() {
     palette.setColor(QPalette::Button, QColor(100, 200, 100));
     tagButton->setPalette(palette);
     tagButton->setProperty("tag", tagId);
-    if (listWidget == ui->generalTagList || listWidget == ui->characterTagList) {
-        if (searchCtx.includedTags.find(tagId) == searchCtx.includedTags.end()) {
-            searchCtx.includedTags.insert(tagId);
-            tagButton->setText(item->text().left(item->text().lastIndexOf(' ')));
-            connect(tagButton, &QPushButton::clicked, this, [this, tagButton]() { removeIncludedTags(tagButton); });
-        }
-    } else if (listWidget == ui->platformTagList) {
-        if (searchCtx.includedPlatformTags.find(tagId) == searchCtx.includedPlatformTags.end()) {
-            searchCtx.includedPlatformTags.insert(tagId);
-            tagButton->setText(item->text().left(item->text().lastIndexOf(' ')));
-            connect(tagButton, &QPushButton::clicked, this, [this, tagButton]() { removeIncludedPlatformTags(tagButton); });
-        }
+
+    if (searchCtx.includedTags.find(tagId) == searchCtx.includedTags.end()) {
+        searchCtx.includedTags.insert(tagId);
+        tagButton->setText(item->text().left(item->text().lastIndexOf(' ')));
+        connect(tagButton, &QPushButton::clicked, this, [this, tagButton]() { removeIncludedTags(tagButton); });
     }
     ui->selectedTagLayout->insertWidget(0, tagButton);
     picSearch();
@@ -557,7 +554,6 @@ void MainWindow::addExcludedTags(QListWidgetItem* item) {
 
     ui->selectedTagScrollArea->show();
 
-    QListWidget* listWidget = item->listWidget();
     uint32_t tagId = item->data(Qt::UserRole).toUInt();
 
     QPushButton* tagButton = new QPushButton(this);
@@ -565,18 +561,11 @@ void MainWindow::addExcludedTags(QListWidgetItem* item) {
     palette.setColor(QPalette::Button, QColor(200, 100, 100));
     tagButton->setPalette(palette);
     tagButton->setProperty("tag", tagId);
-    if (listWidget == ui->generalTagList || listWidget == ui->characterTagList) {
-        if (searchCtx.excludedTags.find(tagId) == searchCtx.excludedTags.end()) {
-            searchCtx.excludedTags.insert(tagId);
-            tagButton->setText(item->text().left(item->text().lastIndexOf(' ')));
-            connect(tagButton, &QPushButton::clicked, this, [this, tagButton]() { removeExcludedTags(tagButton); });
-        }
-    } else if (listWidget == ui->platformTagList) {
-        if (searchCtx.excludedPlatformTags.find(tagId) == searchCtx.excludedPlatformTags.end()) {
-            searchCtx.excludedPlatformTags.insert(tagId);
-            tagButton->setText(item->text().left(item->text().lastIndexOf(' ')));
-            connect(tagButton, &QPushButton::clicked, this, [this, tagButton]() { removeExcludedPlatformTags(tagButton); });
-        }
+
+    if (searchCtx.excludedTags.find(tagId) == searchCtx.excludedTags.end()) {
+        searchCtx.excludedTags.insert(tagId);
+        tagButton->setText(item->text().left(item->text().lastIndexOf(' ')));
+        connect(tagButton, &QPushButton::clicked, this, [this, tagButton]() { removeExcludedTags(tagButton); });
     }
     ui->selectedTagLayout->addWidget(tagButton);
     picSearch();
@@ -595,26 +584,6 @@ void MainWindow::removeIncludedTags(QPushButton* button) {
 void MainWindow::removeExcludedTags(QPushButton* button) {
     uint32_t tag = button->property("tag").toUInt();
     searchCtx.excludedTags.erase(tag);
-    ui->selectedTagLayout->removeWidget(button);
-    button->deleteLater();
-    if (isSelectedTagsEmpty()) {
-        ui->selectedTagScrollArea->hide();
-    }
-    tagSearchTimer.start(DEBOUNCE_DELAY);
-}
-void MainWindow::removeIncludedPlatformTags(QPushButton* button) {
-    uint32_t tag = button->property("tag").toUInt();
-    searchCtx.includedPlatformTags.erase(tag);
-    ui->selectedTagLayout->removeWidget(button);
-    button->deleteLater();
-    if (isSelectedTagsEmpty()) {
-        ui->selectedTagScrollArea->hide();
-    }
-    tagSearchTimer.start(DEBOUNCE_DELAY);
-}
-void MainWindow::removeExcludedPlatformTags(QPushButton* button) {
-    uint32_t tag = button->property("tag").toUInt();
-    searchCtx.excludedPlatformTags.erase(tag);
     ui->selectedTagLayout->removeWidget(button);
     button->deleteLater();
     if (isSelectedTagsEmpty()) {
@@ -642,12 +611,11 @@ void MainWindow::picSearch() {
 }
 void MainWindow::handleSearchResults(DisplayItems* displayItems,
                                      const std::vector<TagCount>& availableTags,
-                                     const std::vector<PlatformTagCount>& availablePlatformTags,
                                      size_t requestId) {
     if (requestId != searchRequestId) return;
     displayController.setDisplayItems(displayItems, searchCtx.searchField);
     displayController.sortDisplayItems(sortCtx);
-    displayTags(availableTags, availablePlatformTags);
+    displayTags(availableTags);
     ui->statusbar->showMessage("搜索完成，共找到 " +
                                QString::number(displayItems->type == DisplayItemType::Pic ? displayItems->picItems.size()
                                                                                           : displayItems->metadataItems.size()) +
@@ -1000,61 +968,63 @@ void MainWindow::handleStartTaggingAction() {
     taskStartTime = std::chrono::steady_clock::now();
 }
 
-void MainWindow::handlePlatformTagContextMenu(const QPoint& pos) {
-    QListWidgetItem* item = ui->platformTagList->itemAt(pos);
-    if (!item) return;
-    
-    QString tagText = item->data(Qt::UserRole + 1).toString();
-    
-    QMenu contextMenu(tr("标签分类"), this);
-    QAction* characterAction = contextMenu.addAction(tr("设为角色"));
-    QAction* attributeAction = contextMenu.addAction(tr("设为属性"));
-    
-    QAction* selectedAction = contextMenu.exec(ui->platformTagList->mapToGlobal(pos));
-    
-    if (selectedAction == characterAction) {
-        if (database.classifyPlatformTag(PlatformType::Pixiv, tagText.toStdString(), true)) {
-            Info() << "Tag classified as character:" << tagText.toStdString();
-            database.syncClassifiedPlatformTagsToPictureTags();
-            loadTags();
-            displayTags();
-        }
-    } else if (selectedAction == attributeAction) {
-        if (database.classifyPlatformTag(PlatformType::Pixiv, tagText.toStdString(), false)) {
-            Info() << "Tag classified as attribute:" << tagText.toStdString();
-            database.syncClassifiedPlatformTagsToPictureTags();
-            loadTags();
-            displayTags();
-        }
-    }
-}
-
-void MainWindow::handleAITagContextMenu(const QPoint& pos) {
+void MainWindow::handleTagContextMenu(const QPoint& pos) {
     QListWidget* listWidget = qobject_cast<QListWidget*>(sender());
     if (!listWidget) return;
     
     QListWidgetItem* item = listWidget->itemAt(pos);
     if (!item) return;
     
+    uint32_t tagId = item->data(Qt::UserRole).toUInt();
     QString tagText = item->data(Qt::UserRole + 1).toString();
+    int source = item->data(Qt::UserRole + 2).toInt();
     
     QMenu contextMenu(tr("标签管理"), this);
-    QAction* deleteAction = contextMenu.addAction(tr("删除分类，恢复为平台标签"));
+    QAction* characterAction = contextMenu.addAction(tr("设为角色"));
+    QAction* attributeAction = contextMenu.addAction(tr("设为属性"));
+    QAction* workAction = contextMenu.addAction(tr("设为作品"));
+    QAction* uncategorizedAction = contextMenu.addAction(tr("设为未分类"));
+    contextMenu.addSeparator();
+    QAction* deleteAction = contextMenu.addAction(tr("删除标签"));
     
     QAction* selectedAction = contextMenu.exec(listWidget->mapToGlobal(pos));
     
-    if (selectedAction == deleteAction) {
+    if (selectedAction == characterAction) {
+        database.setTagCategory(tagId, TagCategory::Character);
+        if (source != 0) {
+            database.classifyPlatformTag(static_cast<PlatformType>(source), tagText.toUtf8().constData(), true);
+            database.syncClassifiedPlatformTagsToPictureTags();
+        }
+        loadTags();
+        displayTags();
+    } else if (selectedAction == attributeAction) {
+        database.setTagCategory(tagId, TagCategory::Attribute);
+        if (source != 0) {
+            database.classifyPlatformTag(static_cast<PlatformType>(source), tagText.toUtf8().constData(), false);
+            database.syncClassifiedPlatformTagsToPictureTags();
+        }
+        loadTags();
+        displayTags();
+    } else if (selectedAction == workAction) {
+        database.setTagCategory(tagId, TagCategory::Work);
+        loadTags();
+        displayTags();
+    } else if (selectedAction == uncategorizedAction) {
+        database.setTagCategory(tagId, TagCategory::Uncategorized);
+        loadTags();
+        displayTags();
+    } else if (selectedAction == deleteAction) {
         QMessageBox::StandardButton reply = QMessageBox::question(
             this, tr("确认删除"),
-            tr("确定要删除标签\"%1\"的分类吗？\n\n标签将恢复为普通平台标签。").arg(tagText),
+            tr("确定要删除标签\"%1\"吗？").arg(tagText),
             QMessageBox::Yes | QMessageBox::No
         );
         
         if (reply == QMessageBox::Yes) {
-            std::string tagStr = tagText.toStdString();
-            Info() << "Deleting AI tag and classification:" << tagStr;
+            std::string tagStr = tagText.toUtf8().constData();
+            Info() << "Deleting tag:" << tagStr;
             
-            database.deleteAITag(tagStr);
+            database.deleteTag(tagId);
             
             auto platformOpt = database.getPlatformTypeByTagText(tagStr);
             if (platformOpt.has_value()) {
@@ -1063,7 +1033,7 @@ void MainWindow::handleAITagContextMenu(const QPoint& pos) {
             
             loadTags();
             displayTags();
-            Info() << "AI tag and classification deleted successfully";
+            Info() << "Tag deleted successfully";
         }
     }
 }

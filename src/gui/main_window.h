@@ -105,7 +105,6 @@ private:
     void initWorkerThreads();
     void connectSignalSlots();
     std::vector<TagCount> allTags;
-    std::vector<PlatformTagCount> allPlatformTags;
     void loadTags();
     void initTagger();
 
@@ -158,8 +157,7 @@ private:
     void clearSearchText();
     // pic tag search handlers
     void handleListWidgetItemSingleClick(QListWidgetItem* item);
-    void handlePlatformTagContextMenu(const QPoint& pos);
-    void handleAITagContextMenu(const QPoint& pos);
+    void handleTagContextMenu(const QPoint& pos);
     void handleSetTagAsCharacter();
     void handleSetTagAsAttribute();
     void handleClearTagClassification();
@@ -167,16 +165,13 @@ private:
     QListWidgetItem* lastClickedTagItem = nullptr;
     void addIncludedTags();
     void addExcludedTags(QListWidgetItem* item);
-    void removeIncludedTags(QPushButton* button); // is there a better way to pass which tag to remove?
+    void removeIncludedTags(QPushButton* button);
     void removeExcludedTags(QPushButton* button);
-    void removeIncludedPlatformTags(QPushButton* button);
-    void removeExcludedPlatformTags(QPushButton* button);
     QTimer tagClickTimer;  // use for double click detection
     QTimer tagSearchTimer; // use for debouncing removing selected tags
     bool tagDoubleClicked = false;
     bool isSelectedTagsEmpty() const {
-        return searchCtx.includedTags.empty() && searchCtx.excludedTags.empty() && searchCtx.includedPlatformTags.empty() &&
-               searchCtx.excludedPlatformTags.empty();
+        return searchCtx.includedTags.empty() && searchCtx.excludedTags.empty();
     };
     // tag search handler
     void tagSearch(const QString& text);
@@ -209,9 +204,8 @@ private:
     void picSearch();
     void handleSearchResults(DisplayItems* displayItems,
                              const std::vector<TagCount>& availableTags,
-                             const std::vector<PlatformTagCount>& availablePlatformTags,
                              size_t requestId);
-    void displayTags(const std::vector<TagCount>& tags = {}, const std::vector<PlatformTagCount>& platformTags = {});
+    void displayTags(const std::vector<TagCount>& tags = {});
     bool isSearchCriteriaEmpty() const { return searchCtx.searchText.empty() && isSelectedTagsEmpty(); };
 
     void handleScrollBarValueChanged(int value) { displayController.handleScrollBarValueChanged(value); };

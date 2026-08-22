@@ -115,31 +115,56 @@
             </item>
            </layout>
           </widget>
-          <widget class="QWidget" name="platformTagTab">
-           <attribute name="title">
-            <string>平台标签</string>
-           </attribute>
-           <layout class="QVBoxLayout" name="attributeTagListLayout">
-            <property name="spacing">
-             <number>0</number>
-            </property>
-            <property name="leftMargin">
-             <number>0</number>
-            </property>
-            <property name="topMargin">
-             <number>0</number>
-            </property>
-            <property name="rightMargin">
-             <number>0</number>
-            </property>
-            <property name="bottomMargin">
-             <number>0</number>
-            </property>
-            <item>
-             <widget class="QListWidget" name="platformTagList"/>
-            </item>
-           </layout>
-          </widget>
+           <widget class="QWidget" name="workTagTab">
+            <attribute name="title">
+             <string>作品</string>
+            </attribute>
+            <layout class="QVBoxLayout" name="workTagListLayout">
+             <property name="spacing">
+              <number>0</number>
+             </property>
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item>
+              <widget class="QListWidget" name="workTagList"/>
+             </item>
+            </layout>
+           </widget>
+           <widget class="QWidget" name="uncategorizedTagTab">
+            <attribute name="title">
+             <string>未分类</string>
+            </attribute>
+            <layout class="QVBoxLayout" name="uncategorizedTagListLayout">
+             <property name="spacing">
+              <number>0</number>
+             </property>
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item>
+              <widget class="QListWidget" name="uncategorizedTagList"/>
+             </item>
+            </layout>
+           </widget>
          </widget>
         </item>
         <item>
