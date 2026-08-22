@@ -27,7 +27,7 @@
 #include <vector>
 
 enum class PlatformType { Unknown, Pixiv, Twitter };
-enum class TagCategory { Uncategorized = 0, Character = 1, Attribute = 2, Work = 3, Artist = 4 };
+enum class TagCategory { Uncategorized = 0, Character = 1, Attribute = 2, Work = 3, Artist = 4, Meta = 5 };
 enum class RestrictType { // keep in sync with autotagger module
     Unknown,
     AllAges, // General
