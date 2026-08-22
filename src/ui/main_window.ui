@@ -139,8 +139,33 @@
               <widget class="QListWidget" name="workTagList"/>
              </item>
             </layout>
-           </widget>
-           <widget class="QWidget" name="uncategorizedTagTab">
+            </widget>
+            <widget class="QWidget" name="metaTagTab">
+             <attribute name="title">
+              <string>Meta</string>
+             </attribute>
+             <layout class="QVBoxLayout" name="metaTagListLayout">
+              <property name="spacing">
+               <number>0</number>
+              </property>
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <item>
+               <widget class="QListWidget" name="metaTagList"/>
+              </item>
+             </layout>
+            </widget>
+            <widget class="QWidget" name="uncategorizedTagTab">
             <attribute name="title">
              <string>未分类</string>
             </attribute>

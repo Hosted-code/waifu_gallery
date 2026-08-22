@@ -167,6 +167,8 @@ void MainWindow::connectSignalSlots() {
     connect(ui->workTagList, &QListWidget::itemDoubleClicked, this, &MainWindow::addExcludedTags);
     connect(ui->uncategorizedTagList, &QListWidget::itemClicked, this, &MainWindow::handleListWidgetItemSingleClick);
     connect(ui->uncategorizedTagList, &QListWidget::itemDoubleClicked, this, &MainWindow::addExcludedTags);
+    connect(ui->metaTagList, &QListWidget::itemClicked, this, &MainWindow::handleListWidgetItemSingleClick);
+    connect(ui->metaTagList, &QListWidget::itemDoubleClicked, this, &MainWindow::addExcludedTags);
     ui->generalTagList->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(ui->generalTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handleTagContextMenu);
     ui->characterTagList->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -175,6 +177,8 @@ void MainWindow::connectSignalSlots() {
     connect(ui->workTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handleTagContextMenu);
     ui->uncategorizedTagList->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(ui->uncategorizedTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handleTagContextMenu);
+    ui->metaTagList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->metaTagList, &QListWidget::customContextMenuRequested, this, &MainWindow::handleTagContextMenu);
     connect(&tagClickTimer, &QTimer::timeout, this, &MainWindow::addIncludedTags);
     connect(&tagSearchTimer, &QTimer::timeout, this, &MainWindow::picSearch);
 
@@ -216,6 +220,7 @@ void MainWindow::displayTags(const std::vector<TagCount>& availableTags) {
     ui->characterTagList->clear();
     ui->generalTagList->clear();
     ui->workTagList->clear();
+    ui->metaTagList->clear();
     ui->uncategorizedTagList->clear();
 
     std::vector<TagCount> tagCounts;
@@ -226,8 +231,8 @@ void MainWindow::displayTags(const std::vector<TagCount>& availableTags) {
         tagCounts = availableTags;
     }
 
-    QStringList characterTagNames, attributeTagNames, workTagNames, uncategorizedTagNames;
-    QList<int> characterTagIndices, attributeTagIndices, workTagIndices, uncategorizedTagIndices;
+    QStringList characterTagNames, attributeTagNames, workTagNames, metaTagNames, uncategorizedTagNames;
+    QList<int> characterTagIndices, attributeTagIndices, workTagIndices, metaTagIndices, uncategorizedTagIndices;
 
     for (int i = 0; i < (int)tagCounts.size(); i++) {
         auto cat = static_cast<TagCategory>(tagCounts[i].tag.category);
@@ -244,6 +249,10 @@ void MainWindow::displayTags(const std::vector<TagCount>& availableTags) {
         case TagCategory::Artist:
             workTagNames.append(getTagString(tagCounts[i]));
             workTagIndices.append(i);
+            break;
+        case TagCategory::Meta:
+            metaTagNames.append(getTagString(tagCounts[i]));
+            metaTagIndices.append(i);
             break;
         default:
             uncategorizedTagNames.append(getTagString(tagCounts[i]));
@@ -271,6 +280,13 @@ void MainWindow::displayTags(const std::vector<TagCount>& availableTags) {
         ui->workTagList->item(i)->setData(Qt::UserRole, tagCounts[workTagIndices[i]].tagId);
         ui->workTagList->item(i)->setData(Qt::UserRole + 1, QString::fromUtf8(tagCounts[workTagIndices[i]].tag.tag.c_str()));
         ui->workTagList->item(i)->setData(Qt::UserRole + 2, tagCounts[workTagIndices[i]].tag.platform);
+    }
+
+    ui->metaTagList->addItems(metaTagNames);
+    for (int i = 0; i < metaTagNames.size(); i++) {
+        ui->metaTagList->item(i)->setData(Qt::UserRole, tagCounts[metaTagIndices[i]].tagId);
+        ui->metaTagList->item(i)->setData(Qt::UserRole + 1, QString::fromUtf8(tagCounts[metaTagIndices[i]].tag.tag.c_str()));
+        ui->metaTagList->item(i)->setData(Qt::UserRole + 2, tagCounts[metaTagIndices[i]].tag.platform);
     }
 
     ui->uncategorizedTagList->addItems(uncategorizedTagNames);
@@ -983,6 +999,7 @@ void MainWindow::handleTagContextMenu(const QPoint& pos) {
     QAction* characterAction = contextMenu.addAction(tr("设为角色"));
     QAction* attributeAction = contextMenu.addAction(tr("设为属性"));
     QAction* workAction = contextMenu.addAction(tr("设为作品"));
+    QAction* metaAction = contextMenu.addAction(tr("设为Meta"));
     QAction* uncategorizedAction = contextMenu.addAction(tr("设为未分类"));
     contextMenu.addSeparator();
     QAction* deleteAction = contextMenu.addAction(tr("删除标签"));
@@ -1007,6 +1024,10 @@ void MainWindow::handleTagContextMenu(const QPoint& pos) {
         displayTags();
     } else if (selectedAction == workAction) {
         database.setTagCategory(tagId, TagCategory::Work);
+        loadTags();
+        displayTags();
+    } else if (selectedAction == metaAction) {
+        database.setTagCategory(tagId, TagCategory::Meta);
         loadTags();
         displayTags();
     } else if (selectedAction == uncategorizedAction) {

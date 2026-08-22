@@ -62,6 +62,7 @@ QString aiTypeStr(AIType a) {
 const QString PILL_STYLE_CHAR = "background: #3D1F3A; border: 1px solid #EC4899; border-radius: 3px; color: #EC4899;";
 const QString PILL_STYLE_ATTR = "background: #1A2E3D; border: 1px solid #38BDF8; border-radius: 3px; color: #38BDF8;";
 const QString PILL_STYLE_WORK = "background: #1A3D2A; border: 1px solid #4ADE80; border-radius: 3px; color: #4ADE80;";
+const QString PILL_STYLE_META = "background: #3D2E1A; border: 1px solid #FBBF24; border-radius: 3px; color: #FBBF24;";
 const QString PILL_STYLE_UNCAT = "background: #252933; border: 1px solid #9CA3AF; border-radius: 3px; color: #9CA3AF;";
 
 } // namespace
@@ -88,6 +89,7 @@ TagPill::TagPill(const QString& text, uint32_t tagId, int category, QWidget* par
     case TagCategory::Character: setStyleSheet(PILL_STYLE_CHAR); break;
     case TagCategory::Attribute: setStyleSheet(PILL_STYLE_ATTR); break;
     case TagCategory::Work: setStyleSheet(PILL_STYLE_WORK); break;
+    case TagCategory::Meta: setStyleSheet(PILL_STYLE_META); break;
     default: setStyleSheet(PILL_STYLE_UNCAT); break;
     }
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
