@@ -65,8 +65,6 @@ struct SearchContext {
     std::string searchText;
     std::unordered_set<uint32_t> includedTags;
     std::unordered_set<uint32_t> excludedTags;
-    std::unordered_set<uint32_t> includedPlatformTags;
-    std::unordered_set<uint32_t> excludedPlatformTags;
     FilterContext filterCtx;
 };
 

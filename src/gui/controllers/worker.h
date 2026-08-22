@@ -34,7 +34,6 @@ public:
 signals:
     void searchComplete(DisplayItems* displayItems,
                         const std::vector<TagCount> availableTags,
-                        const std::vector<PlatformTagCount> availablePlatformTags,
                         size_t requestId);
 
 private:
@@ -42,13 +41,10 @@ private:
 
     std::unordered_set<uint32_t> lastIncludedTags;
     std::unordered_set<uint32_t> lastExcludedTags;
-    std::unordered_set<uint32_t> lastIncludedPlatformTags;
-    std::unordered_set<uint32_t> lastExcludedPlatformTags;
     PlatformType lastPlatformType = PlatformType::Unknown;
     SearchField lastSearchField = SearchField::None;
     std::string lastSearchText;
 
     std::unordered_set<uint64_t> lastTagSearchResult;
-    std::unordered_set<PlatformID> lastPlatformTagSearchResult;
     std::unordered_set<PlatformID> lastTextSearchResult;
 };
