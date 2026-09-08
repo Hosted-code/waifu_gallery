@@ -175,6 +175,125 @@ public:
         tagToId.clear();
         tags.clear();
         tagById.clear();
+        tagChildren.clear();
+        tagParents.clear();
+        aliasToCanonical.clear();
+        tagAliases.clear();
+    }
+
+    void loadTagAliases(std::unordered_map<uint32_t, uint32_t>&& aliasToCanonical,
+                        std::unordered_map<uint32_t, std::vector<uint32_t>>&& tagAliases) {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        this->aliasToCanonical = aliasToCanonical;
+        this->tagAliases = tagAliases;
+    }
+
+    uint32_t getCanonicalId(uint32_t tagId) const {
+        auto it = aliasToCanonical.find(tagId);
+        return it != aliasToCanonical.end() ? it->second : 0;
+    }
+    bool hasAliases(uint32_t tagId) const {
+        auto it = tagAliases.find(tagId);
+        return it != tagAliases.end() && !it->second.empty();
+    }
+    const std::vector<uint32_t>& getAliases(uint32_t tagId) const {
+        static const std::vector<uint32_t> empty;
+        auto it = tagAliases.find(tagId);
+        return it != tagAliases.end() ? it->second : empty;
+    }
+    std::vector<uint32_t> getAliasGroup(uint32_t tagId) const {
+        std::vector<uint32_t> result;
+        std::unordered_set<uint32_t> visited;
+        std::vector<uint32_t> stack{tagId};
+        while (!stack.empty()) {
+            uint32_t cur = stack.back();
+            stack.pop_back();
+            if (visited.count(cur)) continue;
+            visited.insert(cur);
+            result.push_back(cur);
+            auto it = tagAliases.find(cur);
+            if (it != tagAliases.end()) {
+                for (uint32_t a : it->second) if (!visited.count(a)) stack.push_back(a);
+            }
+            auto it2 = aliasToCanonical.find(cur);
+            if (it2 != aliasToCanonical.end()) {
+                if (!visited.count(it2->second)) stack.push_back(it2->second);
+            }
+        }
+        return result;
+    }
+    const std::unordered_map<uint32_t, std::vector<uint32_t>>& getAllAliases() const {
+        return tagAliases;
+    }
+    void addAlias(uint32_t aliasTagId, uint32_t canonicalTagId) {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        aliasToCanonical[aliasTagId] = canonicalTagId;
+        tagAliases[canonicalTagId].push_back(aliasTagId);
+    }
+    void removeAlias(uint32_t aliasTagId, uint32_t canonicalTagId) {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        aliasToCanonical.erase(aliasTagId);
+        auto& aliases = tagAliases[canonicalTagId];
+        aliases.erase(std::remove(aliases.begin(), aliases.end(), aliasTagId), aliases.end());
+    }
+
+    void loadTagHierarchy(std::unordered_map<uint32_t, std::vector<uint32_t>>&& children,
+                          std::unordered_map<uint32_t, std::vector<uint32_t>>&& parents) {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        tagChildren = children;
+        tagParents = parents;
+    }
+
+    bool hasChildren(uint32_t tagId) const {
+        auto it = tagChildren.find(tagId);
+        return it != tagChildren.end() && !it->second.empty();
+    }
+    bool hasParents(uint32_t tagId) const {
+        auto it = tagParents.find(tagId);
+        return it != tagParents.end() && !it->second.empty();
+    }
+    const std::vector<uint32_t>& getChildren(uint32_t tagId) const {
+        static const std::vector<uint32_t> empty;
+        auto it = tagChildren.find(tagId);
+        return it != tagChildren.end() ? it->second : empty;
+    }
+    const std::vector<uint32_t>& getParents(uint32_t tagId) const {
+        static const std::vector<uint32_t> empty;
+        auto it = tagParents.find(tagId);
+        return it != tagParents.end() ? it->second : empty;
+    }
+    const std::unordered_map<uint32_t, std::vector<uint32_t>>& getAllParents() const {
+        return tagParents;
+    }
+
+    void addParentChild(uint32_t childId, uint32_t parentId) {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        tagChildren[parentId].push_back(childId);
+        tagParents[childId].push_back(parentId);
+    }
+    void removeParentChild(uint32_t childId, uint32_t parentId) {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        auto& children = tagChildren[parentId];
+        children.erase(std::remove(children.begin(), children.end(), childId), children.end());
+        auto& parents = tagParents[childId];
+        parents.erase(std::remove(parents.begin(), parents.end(), parentId), parents.end());
+    }
+    bool wouldCreateCycle(uint32_t childId, uint32_t parentId) {
+        std::lock_guard<std::mutex> lock(writeMutex);
+        std::unordered_set<uint32_t> visited;
+        std::vector<uint32_t> stack{parentId};
+        while (!stack.empty()) {
+            uint32_t current = stack.back();
+            stack.pop_back();
+            if (current == childId) return true;
+            if (visited.count(current)) continue;
+            visited.insert(current);
+            auto it = tagChildren.find(current);
+            if (it != tagChildren.end()) {
+                for (uint32_t c : it->second) stack.push_back(c);
+            }
+        }
+        return false;
     }
 
 private:
@@ -191,6 +310,10 @@ private:
     std::unordered_map<std::string, uint32_t> tagToId;  // tag text → tag_id (unified)
     std::vector<TagStr> tags;
     std::unordered_map<uint32_t, TagStr> tagById;
+    std::unordered_map<uint32_t, std::vector<uint32_t>> tagChildren;  // parent_id → [child_ids]
+    std::unordered_map<uint32_t, std::vector<uint32_t>> tagParents;   // child_id → [parent_ids]
+    std::unordered_map<uint32_t, uint32_t> aliasToCanonical;              // alias_tag_id → canonical_tag_id
+    std::unordered_map<uint32_t, std::vector<uint32_t>> tagAliases;     // canonical_tag_id → [alias_tag_ids]
 
     // feature hash cache for similarity search
     std::vector<std::pair<uint64_t, std::array<uint8_t, 64>>> picFeatureHashes; // (picID, featureHash)
@@ -263,6 +386,14 @@ public:
     
     // tag source and category management
     bool setTagCategory(uint32_t tagId, TagCategory category) const;
+
+    // tag hierarchy management
+    bool setTagParent(uint32_t childTagId, uint32_t parentTagId);
+    bool removeTagParent(uint32_t childTagId, uint32_t parentTagId) const;
+
+    // tag alias management
+    bool setTagAlias(uint32_t aliasTagId, uint32_t canonicalTagId);
+    bool removeTagAlias(uint32_t aliasTagId, uint32_t canonicalTagId) const;
     
     // platform tag classification
     bool classifyPlatformTag(PlatformType platform, const std::string& tag, bool isCharacter) const;

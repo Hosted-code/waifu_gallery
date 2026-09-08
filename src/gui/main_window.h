@@ -28,6 +28,7 @@
 #include "service/model.h"
 #include "service/tagger.h"
 #include "settings_dialog.h"
+#include "tag_browser_dialog.h"
 #include "widgets/image_viewer.h"
 #include "widgets/picture_frame.h"
 #include <QCoreApplication>
@@ -170,6 +171,7 @@ private:
     QTimer tagClickTimer;  // use for double click detection
     QTimer tagSearchTimer; // use for debouncing removing selected tags
     bool tagDoubleClicked = false;
+    uint32_t pendingParentTagId = 0; // non-zero when user selected a tag as parent, waiting for child selection
     bool isSelectedTagsEmpty() const {
         return searchCtx.includedTags.empty() && searchCtx.excludedTags.empty();
     };
@@ -189,6 +191,8 @@ private:
     void handleShowAboutAction();
     SettingsDialog* settingsDialog = nullptr;
     void handleShowSettingsAction();
+    TagBrowserDialog* tagBrowserDialog = nullptr;
+    void handleOpenTagBrowserAction();
 
     // task progress
     void displayImportProgress(size_t progress, size_t total);

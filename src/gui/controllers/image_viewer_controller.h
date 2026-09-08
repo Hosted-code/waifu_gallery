@@ -23,6 +23,8 @@ struct TagDisplay {
     std::string name;
     int category = 0;
     int source = 0;
+    bool hasParents = false;
+    bool hasChildren = false;
 };
 
 class ImageViewerController : public QObject {

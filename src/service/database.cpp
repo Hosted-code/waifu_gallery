@@ -210,9 +210,31 @@ bool PicDatabase::createTables() const {
         )
     )";
 
+    const std::string tagParentTable = R"(
+        CREATE TABLE IF NOT EXISTS tag_parent (
+            tag_id INTEGER NOT NULL,
+            parent_tag_id INTEGER NOT NULL,
+            PRIMARY KEY (tag_id, parent_tag_id),
+            FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE,
+            FOREIGN KEY (parent_tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
+        )
+    )";
+
+    const std::string tagAliasTable = R"(
+        CREATE TABLE IF NOT EXISTS tag_alias (
+            tag_id INTEGER NOT NULL,
+            canonical_tag_id INTEGER NOT NULL,
+            PRIMARY KEY (tag_id, canonical_tag_id),
+            FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE,
+            FOREIGN KEY (canonical_tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
+        )
+    )";
+
     const std::vector<std::string> tables = {metadataTable,
                                               picturesTable,
                                               tagsTable,
+                                              tagParentTable,
+                                              tagAliasTable,
                                               pictureTagsTable,
                                               pictureFilesTable,
                                               pictureSourceTable,
@@ -232,7 +254,10 @@ bool PicDatabase::createTables() const {
         "CREATE INDEX IF NOT EXISTS idx_picture_metadata_author_name ON picture_metadata(author_name)",
         "CREATE INDEX IF NOT EXISTS idx_picture_metadata_title ON picture_metadata(title)",
         "CREATE INDEX IF NOT EXISTS idx_picture_tags_id_2 ON picture_tags(tag_id, id)",
-        "CREATE INDEX IF NOT EXISTS idx_imported_directories_dir_path ON imported_directories(dir_path)"};
+        "CREATE INDEX IF NOT EXISTS idx_imported_directories_dir_path ON imported_directories(dir_path)",
+        "CREATE INDEX IF NOT EXISTS idx_tag_parent_parent ON tag_parent(parent_tag_id)",
+        "CREATE INDEX IF NOT EXISTS idx_tag_alias_canonical ON tag_alias(canonical_tag_id)",
+        "CREATE INDEX IF NOT EXISTS idx_tag_alias_tag ON tag_alias(tag_id)"};
     beginTransaction();
     for (const auto& tableSql : tables) {
         if (!execute(tableSql)) {
@@ -281,13 +306,32 @@ void PicDatabase::initTagMapping() const {
         TagStr tagStr{tag ? tag : "", platform, category, translatedTag ? translatedTag : ""};
         tags.emplace_back(tagStr);
         tagById[id] = tagStr;
-
-        if (currentMode == DbMode::Import) {
-            tagToId[tag ? tag : ""] = id;
-        }
+        tagToId[tag ? tag : ""] = id;
     }
 
     cache.loadTagMapping(std::move(tagToId), std::move(tags), std::move(tagById));
+
+    std::unordered_map<uint32_t, std::vector<uint32_t>> tagChildren;
+    std::unordered_map<uint32_t, std::vector<uint32_t>> tagParents;
+    stmt = prepare("SELECT tag_id, parent_tag_id FROM tag_parent");
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        uint32_t childId = sqlite3_column_int(stmt.get(), 0);
+        uint32_t parentId = sqlite3_column_int(stmt.get(), 1);
+        tagChildren[parentId].push_back(childId);
+        tagParents[childId].push_back(parentId);
+    }
+    cache.loadTagHierarchy(std::move(tagChildren), std::move(tagParents));
+
+    std::unordered_map<uint32_t, uint32_t> aliasToCanonical;
+    std::unordered_map<uint32_t, std::vector<uint32_t>> tagAliases;
+    stmt = prepare("SELECT tag_id, canonical_tag_id FROM tag_alias");
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+        uint32_t aliasTagId = sqlite3_column_int(stmt.get(), 0);
+        uint32_t canonicalId = sqlite3_column_int(stmt.get(), 1);
+        aliasToCanonical[aliasTagId] = canonicalId;
+        tagAliases[canonicalId].push_back(aliasTagId);
+    }
+    cache.loadTagAliases(std::move(aliasToCanonical), std::move(tagAliases));
 
     Info() << "Tag mappings loaded. Total tags:" << tags.size();
 }
@@ -934,29 +978,80 @@ std::unordered_set<uint64_t> PicDatabase::tagSearch(const std::unordered_set<uin
 
     std::string includedTagIdStr;
     std::string excludedTagIdStr;
-    if (!includedTagIds.empty()) {
-        int idx = 0;
-        for (const auto& tagId : includedTagIds) {
-            if (idx++) includedTagIdStr += ",";
-            includedTagIdStr += std::to_string(tagId);
-        }
+    for (const auto& tagId : includedTagIds) {
+        if (!includedTagIdStr.empty()) includedTagIdStr += ",";
+        includedTagIdStr += std::to_string(tagId);
     }
     if (!excludedTagIds.empty()) {
-        int idx = 0;
         for (const auto& tagId : excludedTagIds) {
-            if (idx++) excludedTagIdStr += ",";
+            if (!excludedTagIdStr.empty()) excludedTagIdStr += ",";
             excludedTagIdStr += std::to_string(tagId);
         }
     }
-    std::string sql = "SELECT id FROM picture_tags WHERE 1=1 AND tag_id IN (" + includedTagIdStr +
-                      ")";
-    if (!excludedTagIds.empty()) {
-        sql += " AND id NOT IN (SELECT id FROM picture_tags WHERE tag_id IN (" + excludedTagIdStr + "))";
-    }
-    sql += " GROUP BY id HAVING COUNT(DISTINCT tag_id) = " + std::to_string(includedTagIds.size());
 
-    SQLiteStatement stmt;
-    stmt = prepare(sql);
+    std::string sql;
+    if (excludedTagIds.empty()) {
+        sql = R"(
+            WITH RECURSIVE 
+              inc_alias(root_id, tag_id) AS (
+                SELECT tag_id, tag_id FROM tags WHERE tag_id IN ()" + includedTagIdStr + R"()
+                UNION
+                SELECT ia.root_id, ta.tag_id FROM tag_alias ta JOIN inc_alias ia ON ta.canonical_tag_id = ia.tag_id
+                UNION
+                SELECT ia.root_id, ta.canonical_tag_id FROM tag_alias ta JOIN inc_alias ia ON ta.tag_id = ia.tag_id
+              ),
+              inc_desc(root_id, tag_id) AS (
+                SELECT root_id, tag_id FROM inc_alias
+                UNION ALL
+                SELECT inc_desc.root_id, tp.tag_id
+                FROM tag_parent tp JOIN inc_desc ON tp.parent_tag_id = inc_desc.tag_id
+              )
+            SELECT pt.id
+            FROM picture_tags pt
+            JOIN inc_desc d ON pt.tag_id = d.tag_id
+            GROUP BY pt.id
+            HAVING COUNT(DISTINCT d.root_id) = )" + std::to_string(includedTagIds.size());
+    } else {
+        sql = R"(
+            WITH RECURSIVE 
+              inc_alias(root_id, tag_id) AS (
+                SELECT tag_id, tag_id FROM tags WHERE tag_id IN ()" + includedTagIdStr + R"()
+                UNION
+                SELECT ia.root_id, ta.tag_id FROM tag_alias ta JOIN inc_alias ia ON ta.canonical_tag_id = ia.tag_id
+                UNION
+                SELECT ia.root_id, ta.canonical_tag_id FROM tag_alias ta JOIN inc_alias ia ON ta.tag_id = ia.tag_id
+              ),
+              inc_desc(root_id, tag_id) AS (
+                SELECT root_id, tag_id FROM inc_alias
+                UNION ALL
+                SELECT inc_desc.root_id, tp.tag_id
+                FROM tag_parent tp JOIN inc_desc ON tp.parent_tag_id = inc_desc.tag_id
+              ),
+              exc_alias(root_id, tag_id) AS (
+                SELECT tag_id, tag_id FROM tags WHERE tag_id IN ()" + excludedTagIdStr + R"()
+                UNION
+                SELECT ea.root_id, ta.tag_id FROM tag_alias ta JOIN exc_alias ea ON ta.canonical_tag_id = ea.tag_id
+                UNION
+                SELECT ea.root_id, ta.canonical_tag_id FROM tag_alias ta JOIN exc_alias ea ON ta.tag_id = ea.tag_id
+              ),
+              exc_desc(root_id, tag_id) AS (
+                SELECT root_id, tag_id FROM exc_alias
+                UNION ALL
+                SELECT exc_desc.root_id, tp.tag_id
+                FROM tag_parent tp JOIN exc_desc ON tp.parent_tag_id = exc_desc.tag_id
+              )
+            SELECT pt.id
+            FROM picture_tags pt
+            JOIN inc_desc d ON pt.tag_id = d.tag_id
+            WHERE pt.id NOT IN (
+                SELECT pt2.id FROM picture_tags pt2 
+                JOIN exc_desc e ON pt2.tag_id = e.tag_id
+            )
+            GROUP BY pt.id
+            HAVING COUNT(DISTINCT d.root_id) = )" + std::to_string(includedTagIds.size());
+    }
+
+    SQLiteStatement stmt = prepare(sql);
     if (!stmt.get()) {
         Error() << "Failed to prepare tag search statement:" << sqlite3_errmsg(db);
         return results;
@@ -1244,6 +1339,9 @@ void PicDatabase::syncClassifiedPlatformTagsToPictureTags() const {
 }
 
 std::optional<uint32_t> PicDatabase::getTagIdByTagText(const std::string& tagText) const {
+    uint32_t cachedId = cache.getTagId(tagText);
+    if (cachedId != 0) return cachedId;
+
     SQLiteStatement stmt = prepare(R"(
         SELECT tag_id FROM tags WHERE tag = ? LIMIT 1
     )");
@@ -1368,6 +1466,80 @@ bool PicDatabase::setTagCategory(uint32_t tagId, TagCategory category) const {
     }
     auto& cache = DbCache::getInstance();
     cache.updateTagCategory(tagId, static_cast<int>(category));
+    return true;
+}
+
+bool PicDatabase::setTagParent(uint32_t childTagId, uint32_t parentTagId) {
+    if (childTagId == parentTagId) {
+        Warn() << "Cannot set tag as its own parent";
+        return false;
+    }
+    if (cache.wouldCreateCycle(childTagId, parentTagId)) {
+        Warn() << "Setting parent would create cycle: child=" << childTagId << " parent=" << parentTagId;
+        return false;
+    }
+    SQLiteStatement stmt = prepare(R"(
+        INSERT OR IGNORE INTO tag_parent(tag_id, parent_tag_id) VALUES (?, ?)
+    )");
+    sqlite3_bind_int(stmt.get(), 1, static_cast<int>(childTagId));
+    sqlite3_bind_int(stmt.get(), 2, static_cast<int>(parentTagId));
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        Error() << "Failed to set tag parent: " << sqlite3_errmsg(db);
+        return false;
+    }
+    cache.addParentChild(childTagId, parentTagId);
+    return true;
+}
+
+bool PicDatabase::removeTagParent(uint32_t childTagId, uint32_t parentTagId) const {
+    SQLiteStatement stmt = prepare(R"(
+        DELETE FROM tag_parent WHERE tag_id = ? AND parent_tag_id = ?
+    )");
+    sqlite3_bind_int(stmt.get(), 1, static_cast<int>(childTagId));
+    sqlite3_bind_int(stmt.get(), 2, static_cast<int>(parentTagId));
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        Error() << "Failed to remove tag parent: " << sqlite3_errmsg(db);
+        return false;
+    }
+    cache.removeParentChild(childTagId, parentTagId);
+    return true;
+}
+
+bool PicDatabase::setTagAlias(uint32_t aliasTagId, uint32_t canonicalTagId) {
+    if (aliasTagId == canonicalTagId) return false;
+
+    auto group = cache.getAliasGroup(aliasTagId);
+    for (uint32_t tid : group) {
+        if (tid == canonicalTagId) {
+            Warn() << "Tags already in the same alias group";
+            return false;
+        }
+    }
+
+    SQLiteStatement stmt = prepare(R"(
+        INSERT OR IGNORE INTO tag_alias(tag_id, canonical_tag_id) VALUES (?, ?)
+    )");
+    sqlite3_bind_int(stmt.get(), 1, static_cast<int>(aliasTagId));
+    sqlite3_bind_int(stmt.get(), 2, static_cast<int>(canonicalTagId));
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        Error() << "Failed to set tag alias: " << sqlite3_errmsg(db);
+        return false;
+    }
+    cache.addAlias(aliasTagId, canonicalTagId);
+    return true;
+}
+
+bool PicDatabase::removeTagAlias(uint32_t aliasTagId, uint32_t canonicalTagId) const {
+    SQLiteStatement stmt = prepare(R"(
+        DELETE FROM tag_alias WHERE tag_id = ? AND canonical_tag_id = ?
+    )");
+    sqlite3_bind_int(stmt.get(), 1, static_cast<int>(aliasTagId));
+    sqlite3_bind_int(stmt.get(), 2, static_cast<int>(canonicalTagId));
+    if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
+        Error() << "Failed to remove tag alias: " << sqlite3_errmsg(db);
+        return false;
+    }
+    cache.removeAlias(aliasTagId, canonicalTagId);
     return true;
 }
 

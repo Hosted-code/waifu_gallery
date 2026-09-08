@@ -19,9 +19,11 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QFileDialog>
+#include <QInputDialog>
 #include "main_window.h"
 #include "controllers/utils.h"
 #include "service/database.h"
+#include "tag_picker_dialog.h"
 #include "ui_main_window.h"
 #include "utils/settings.h"
 #include <QFileDialog>
@@ -199,6 +201,7 @@ void MainWindow::connectSignalSlots() {
     connect(ui->importExistingDirectoriesAction, &QAction::triggered, this, &MainWindow::handleImportExistingDirectoriesAction);
     connect(ui->showAboutAction, &QAction::triggered, this, &MainWindow::handleShowAboutAction);
     connect(ui->showSettingsAction, &QAction::triggered, this, &MainWindow::handleShowSettingsAction);
+    connect(ui->openTagBrowserAction, &QAction::triggered, this, &MainWindow::handleOpenTagBrowserAction);
     connect(ui->startTaggingAction, &QAction::triggered, this, &MainWindow::handleStartTaggingAction);
 
     // cancel progress
@@ -207,6 +210,12 @@ void MainWindow::connectSignalSlots() {
     // image viewer
 }QString getTagString(const TagCount& tagCount) {
     QString tagName = QString::fromUtf8(tagCount.tag.tag.c_str());
+    auto& cache = DbCache::getInstance();
+    if (cache.hasParents(tagCount.tagId)) tagName += QString::fromUtf8("◂");
+    if (cache.hasChildren(tagCount.tagId)) tagName += QString::fromUtf8("▸");
+    if (cache.hasAliases(tagCount.tagId)) {
+        tagName += QStringLiteral(" [+") + QString::number(cache.getAliases(tagCount.tagId).size()) + QStringLiteral("]");
+    }
     if (tagCount.fileCount > 0 && tagCount.count != tagCount.fileCount) {
         return QString("%1 (%2/%3)").arg(tagName).arg(tagCount.count).arg(tagCount.fileCount);
     }
@@ -230,6 +239,25 @@ void MainWindow::displayTags(const std::vector<TagCount>& availableTags) {
     } else {
         tagCounts = availableTags;
     }
+
+    auto& cache = DbCache::getInstance();
+    std::unordered_map<uint32_t, uint32_t> aliasCountMap;
+    std::vector<TagCount> foldedTagCounts;
+    for (auto& tc : tagCounts) {
+        uint32_t canonicalId = cache.getCanonicalId(tc.tagId);
+        if (canonicalId != 0) {
+            aliasCountMap[canonicalId] += tc.count;
+        } else {
+            foldedTagCounts.push_back(tc);
+        }
+    }
+    for (auto& tc : foldedTagCounts) {
+        auto it = aliasCountMap.find(tc.tagId);
+        if (it != aliasCountMap.end()) {
+            tc.count += it->second;
+        }
+    }
+    tagCounts = std::move(foldedTagCounts);
 
     QStringList characterTagNames, attributeTagNames, workTagNames, metaTagNames, uncategorizedTagNames;
     QList<int> characterTagIndices, attributeTagIndices, workTagIndices, metaTagIndices, uncategorizedTagIndices;
@@ -539,6 +567,22 @@ void MainWindow::clearSearchText() {
     picSearch();
 }
 void MainWindow::handleListWidgetItemSingleClick(QListWidgetItem* item) {
+    if (pendingParentTagId != 0) {
+        uint32_t childTagId = item->data(Qt::UserRole).toUInt();
+        if (childTagId == pendingParentTagId) {
+            statusBar()->showMessage(tr("不能将标签设为自身的父标签"), 3000);
+        } else if (database.setTagParent(childTagId, pendingParentTagId)) {
+            QString parentName = QString::fromUtf8(database.getStringTag(pendingParentTagId).tag.c_str());
+            QString childName = QString::fromUtf8(database.getStringTag(childTagId).tag.c_str());
+            statusBar()->showMessage(tr("已建立: %1 → %2").arg(parentName, childName), 3000);
+        } else {
+            statusBar()->showMessage(tr("建立父子关系失败（可能产生循环）"), 3000);
+        }
+        pendingParentTagId = 0;
+        loadTags();
+        displayTags();
+        return;
+    }
     tagClickTimer.start(DOUBLE_CLICK_DELAY);
     lastClickedTagItem = item;
 }
@@ -959,6 +1003,20 @@ void MainWindow::handleShowSettingsAction() {
     settingsDialog->raise();
     settingsDialog->activateWindow();
 }
+void MainWindow::handleOpenTagBrowserAction() {
+    if (!tagBrowserDialog) {
+        tagBrowserDialog = new TagBrowserDialog(database, this);
+        tagBrowserDialog->setAttribute(Qt::WA_DeleteOnClose);
+        connect(tagBrowserDialog, &QObject::destroyed, this, [this]() { tagBrowserDialog = nullptr; });
+        connect(tagBrowserDialog, &QDialog::finished, this, [this]() {
+            loadTags();
+            displayTags();
+        });
+    }
+    tagBrowserDialog->show();
+    tagBrowserDialog->raise();
+    tagBrowserDialog->activateWindow();
+}
 void MainWindow::handleStartTaggingAction() {
     if (haveOngoingTask()) {
         ui->statusbar->showMessage("已有任务正在进行中，请稍后再试。");
@@ -1002,6 +1060,37 @@ void MainWindow::handleTagContextMenu(const QPoint& pos) {
     QAction* metaAction = contextMenu.addAction(tr("设为Meta"));
     QAction* uncategorizedAction = contextMenu.addAction(tr("设为未分类"));
     contextMenu.addSeparator();
+
+    QMenu* parentMenu = contextMenu.addMenu(tr("父标签"));
+    QAction* setParentAction = parentMenu->addAction(tr("选择父标签..."));
+    parentMenu->addSeparator();
+    auto& cache = DbCache::getInstance();
+    if (cache.hasParents(tagId)) {
+        auto* removeParentSubmenu = parentMenu->addMenu(tr("移除父标签"));
+        for (uint32_t pid : cache.getParents(tagId)) {
+            TagStr ptag = cache.getStringTag(pid);
+            if (ptag.tag.empty()) continue;
+            QAction* act = removeParentSubmenu->addAction(QString::fromUtf8(ptag.tag.c_str()));
+            act->setData(pid);
+        }
+    }
+
+    contextMenu.addSeparator();
+
+    QMenu* aliasMenu = contextMenu.addMenu(tr("别名"));
+    QAction* addAliasAction = aliasMenu->addAction(tr("添加别名..."));
+    if (cache.hasAliases(tagId)) {
+        aliasMenu->addSeparator();
+        auto* removeAliasSubmenu = aliasMenu->addMenu(tr("移除别名"));
+        for (uint32_t aid : cache.getAliases(tagId)) {
+            TagStr atag = cache.getStringTag(aid);
+            if (atag.tag.empty()) continue;
+            QAction* act = removeAliasSubmenu->addAction(QString::fromUtf8(atag.tag.c_str()));
+            act->setData(aid);
+        }
+    }
+
+    contextMenu.addSeparator();
     QAction* deleteAction = contextMenu.addAction(tr("删除标签"));
     
     QAction* selectedAction = contextMenu.exec(listWidget->mapToGlobal(pos));
@@ -1034,7 +1123,48 @@ void MainWindow::handleTagContextMenu(const QPoint& pos) {
         database.setTagCategory(tagId, TagCategory::Uncategorized);
         loadTags();
         displayTags();
-    } else if (selectedAction == deleteAction) {
+    } else if (selectedAction == setParentAction) {
+        TagPickerDialog picker(database, tagId, TagPickerDialog::SelectExisting, this);
+        if (picker.exec() == QDialog::Accepted && picker.selectedTagId() != 0) {
+            if (database.setTagParent(tagId, picker.selectedTagId())) {
+                loadTags();
+                displayTags();
+            } else {
+                QMessageBox::warning(this, tr("操作失败"), tr("无法建立父子关系（可能产生循环）"));
+            }
+        }
+    } else if (selectedAction == addAliasAction) {
+        TagPickerDialog picker(database, tagId, TagPickerDialog::SelectExisting, this);
+        if (picker.exec() == QDialog::Accepted && picker.selectedTagId() != 0) {
+            uint32_t aliasId = picker.selectedTagId();
+            QString aliasName = QString::fromUtf8(cache.getStringTag(aliasId).tag.c_str());
+            if (database.setTagAlias(aliasId, tagId)) {
+                loadTags();
+                displayTags();
+            } else {
+                QMessageBox::warning(this, tr("添加失败"), tr("无法建立别名关系（可能已在同一别名组中）"));
+            }
+        }
+    } else {
+        if (selectedAction && selectedAction->parent() && selectedAction->parent()->inherits("QMenu")) {
+            auto* grandparentMenu = qobject_cast<QMenu*>(selectedAction->parent()->parent());
+            if (grandparentMenu) {
+                QString menuTitle = grandparentMenu->title();
+                QVariant data = selectedAction->data();
+                if (menuTitle == tr("移除父标签") && data.canConvert<uint>()) {
+                    database.removeTagParent(tagId, data.toUInt());
+                    loadTags();
+                    displayTags();
+                } else if (menuTitle == tr("移除别名") && data.canConvert<uint>()) {
+                    database.removeTagAlias(data.toUInt(), tagId);
+                    loadTags();
+                    displayTags();
+                }
+            }
+        }
+    }
+
+    if (selectedAction == deleteAction) {
         QMessageBox::StandardButton reply = QMessageBox::question(
             this, tr("确认删除"),
             tr("确定要删除标签\"%1\"吗？").arg(tagText),

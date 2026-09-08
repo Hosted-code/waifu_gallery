@@ -67,13 +67,18 @@ const QString PILL_STYLE_UNCAT = "background: #252933; border: 1px solid #9CA3AF
 
 } // namespace
 
-TagPill::TagPill(const QString& text, uint32_t tagId, int category, QWidget* parent)
+TagPill::TagPill(const QString& text, uint32_t tagId, int category, bool hasParents, bool hasChildren, QWidget* parent)
     : QWidget(parent), m_tagId(tagId), m_category(category) {
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(4, 1, 1, 1);
     layout->setSpacing(2);
 
-    auto* nameLabel = new QLabel(text, this);
+    QString displayText;
+    if (hasParents) displayText += QString::fromUtf8("◂");
+    displayText += text;
+    if (hasChildren) displayText += QString::fromUtf8("▸");
+
+    auto* nameLabel = new QLabel(displayText, this);
     nameLabel->setStyleSheet("border: none; background: transparent;");
     layout->addWidget(nameLabel);
 
@@ -312,7 +317,7 @@ void ImageViewerDialog::rebuildTagPills() {
         tagsLayout->addWidget(emptyLabel);
     } else {
         for (const auto& td : tagDisplays) {
-            auto* pill = new TagPill(QString::fromUtf8(td.name.c_str()), td.tagId, td.category, tagsContainer);
+            auto* pill = new TagPill(QString::fromUtf8(td.name.c_str()), td.tagId, td.category, td.hasParents, td.hasChildren, tagsContainer);
             connect(pill, &TagPill::removeRequested, this, [this](uint32_t tagId) {
                 if (controller) controller->removeTag(tagId);
             });

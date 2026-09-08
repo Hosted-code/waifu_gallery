@@ -1249,15 +1249,22 @@
     </property>
     <addaction name="showAboutAction"/>
    </widget>
-   <widget class="QMenu" name="settingsMenu">
-    <property name="title">
-     <string>选项</string>
-    </property>
-    <addaction name="showSettingsAction"/>
-   </widget>
-   <addaction name="fileMenu"/>
-   <addaction name="settingsMenu"/>
-   <addaction name="helpMenu"/>
+    <widget class="QMenu" name="settingsMenu">
+     <property name="title">
+      <string>选项</string>
+     </property>
+     <addaction name="showSettingsAction"/>
+    </widget>
+    <widget class="QMenu" name="viewMenu">
+     <property name="title">
+      <string>视图</string>
+     </property>
+     <addaction name="openTagBrowserAction"/>
+    </widget>
+    <addaction name="fileMenu"/>
+    <addaction name="viewMenu"/>
+    <addaction name="settingsMenu"/>
+    <addaction name="helpMenu"/>
   </widget>
   <action name="showRestrictedAction">
    <property name="checkable">
@@ -1303,11 +1310,16 @@
     <string>重新扫描已导入的文件夹</string>
    </property>
   </action>
-  <action name="startTaggingAction">
-   <property name="text">
-    <string>开始自动标签分类</string>
-   </property>
-  </action>
+   <action name="startTaggingAction">
+    <property name="text">
+     <string>开始自动标签分类</string>
+    </property>
+   </action>
+   <action name="openTagBrowserAction">
+    <property name="text">
+     <string>标签浏览器...</string>
+    </property>
+   </action>
  </widget>
  <resources/>
  <connections/>

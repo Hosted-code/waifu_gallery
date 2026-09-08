@@ -11,7 +11,7 @@
 class TagPill : public QWidget {
     Q_OBJECT
 public:
-    TagPill(const QString& text, uint32_t tagId, int category, QWidget* parent = nullptr);
+    TagPill(const QString& text, uint32_t tagId, int category, bool hasParents = false, bool hasChildren = false, QWidget* parent = nullptr);
     uint32_t tagId() const { return m_tagId; }
     int category() const { return m_category; }
 

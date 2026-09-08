@@ -173,7 +173,8 @@ std::vector<TagDisplay> ImageViewerController::currentTagDisplays() const {
     for (const PicTag& picTag : info->tags) {
         TagStr tagStr = cache.getStringTag(picTag.tagId);
         if (!tagStr.tag.empty()) {
-            result.push_back(TagDisplay{picTag.tagId, tagStr.tag, tagStr.category, tagStr.platform});
+            result.push_back(TagDisplay{picTag.tagId, tagStr.tag, tagStr.category, tagStr.platform,
+                                        cache.hasParents(picTag.tagId), cache.hasChildren(picTag.tagId)});
         }
     }
 
@@ -237,10 +238,26 @@ std::vector<std::string> ImageViewerController::getTagSuggestions(const std::str
     if (!database || prefix.empty()) return result;
 
     QString qPrefix = QString::fromUtf8(prefix.c_str());
+    auto& cache = DbCache::getInstance();
     const auto& allTags = database->getAllTags();
     for (const auto& tag : allTags) {
         if (QString::fromUtf8(tag.tag.c_str()).startsWith(qPrefix, Qt::CaseInsensitive)) {
             result.push_back(tag.tag);
+        }
+    }
+
+    if (result.size() < 20) {
+        for (const auto& [canonicalId, aliasIds] : std::as_const(cache.getAllAliases())) {
+            for (uint32_t aliasId : aliasIds) {
+                TagStr aliasTag = cache.getStringTag(aliasId);
+                if (aliasTag.tag.empty()) continue;
+                if (QString::fromUtf8(aliasTag.tag.c_str()).startsWith(qPrefix, Qt::CaseInsensitive)) {
+                    TagStr ts = cache.getStringTag(canonicalId);
+                    if (!ts.tag.empty() && std::find(result.begin(), result.end(), ts.tag) == result.end()) {
+                        result.push_back(ts.tag);
+                    }
+                }
+            }
         }
     }
 
